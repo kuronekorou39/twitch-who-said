@@ -34,7 +34,7 @@ beforeEach(() => {
     if (req.type === 'ws:userStats') return { user: 'alice', displayName: 'Alice', count: 60, firstTs: T0 - 86_400_000, lastTs: T0 };
     return undefined;
   });
-  vi.stubGlobal('chrome', { runtime: { sendMessage } });
+  vi.stubGlobal('chrome', { runtime: { id: 'test-extension', sendMessage } });
   // happy-dom に無い API を補う
   vi.stubGlobal(
     'IntersectionObserver',
