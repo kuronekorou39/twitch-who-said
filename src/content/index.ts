@@ -1,10 +1,12 @@
 import { rpc } from '../shared/messages';
 import { DEFAULT_SETTINGS } from '../shared/settings';
 import type { Settings } from '../shared/types';
-import { LiveCapture } from './capture';
+import { ChatCapture } from './capture';
+import { extractLiveMessage, extractVodMessage } from './extract';
 import { detectPage, samePage, type PageInfo } from './page';
 import { installPopover } from './popover';
 import { SELECTORS } from './selectors';
+import { fetchSsrHtml, resolveVodChannel, resolveVodStart } from './vod';
 
 const LOG_PREFIX = '[Who Said]';
 /** チャットコンテナ出現待ちのポーリング間隔と上限 */
@@ -16,39 +18,82 @@ const URL_POLL_MS = 1000;
 const SELF_CHECK_MS = 30_000;
 
 let current: PageInfo = { kind: 'other' };
-let capture: LiveCapture | null = null;
-let containerWaitToken = 0;
+let capture: ChatCapture | null = null;
+/** VOD ページで解決したチャンネル(ポップオーバーのスコープに使う) */
+let vodChannel: string | null = null;
+let setupToken = 0;
 let warnedOnce = false;
 let settings: Settings = DEFAULT_SETTINGS;
 
 function teardown(): void {
-  containerWaitToken++;
+  setupToken++;
   capture?.stop();
   capture = null;
+  vodChannel = null;
 }
 
 function setup(page: PageInfo): void {
   teardown();
   current = page;
-  if (page.kind !== 'live') return; // VOD は M3 で対応
+  if (page.kind === 'live') setupLive(page.channel);
+  else if (page.kind === 'vod') void setupVod(page.vodId);
+}
 
-  const cap = new LiveCapture(page.channel);
-  capture = cap;
-  const token = ++containerWaitToken;
-  void waitForContainer(SELECTORS.live.chatContainer, token).then((container) => {
-    if (!container || token !== containerWaitToken) return;
-    cap.start(container);
-    setTimeout(() => {
-      if (capture === cap && cap.stats.seen === 0) warnNoMessages();
-    }, SELF_CHECK_MS);
+function setupLive(channel: string): void {
+  const cap = new ChatCapture({
+    lineSelector: SELECTORS.live.chatLine,
+    extract: (line) => extractLiveMessage(line, { channel }),
   });
+  capture = cap;
+  const token = setupToken;
+  void waitForContainer(SELECTORS.live.chatContainer, token).then((container) => {
+    if (!container || token !== setupToken) return;
+    cap.start(container);
+    scheduleSelfCheck(cap);
+  });
+}
+
+async function setupVod(vodId: string): Promise<void> {
+  const token = setupToken;
+  const cancelled = () => token !== setupToken;
+  // SSR HTML は 1 回だけ取得して開始日時・チャンネル解決で共有する
+  let ssrPromise: Promise<string | null> | null = null;
+  const ssrHtml = () => (ssrPromise ??= fetchSsrHtml());
+
+  const [channel, vodStart, container] = await Promise.all([
+    resolveVodChannel(ssrHtml, cancelled),
+    resolveVodStart(vodId, ssrHtml),
+    waitForContainer(SELECTORS.vod.chatContainer, token),
+  ]);
+  if (cancelled()) return;
+  if (!channel) {
+    console.warn(`${LOG_PREFIX} VOD のチャンネルを判定できなかったため取り込みを行いません (${vodId})`);
+    return;
+  }
+  if (vodStart === null) console.warn(`${LOG_PREFIX} VOD の配信開始日時が取れないため、日時は取り込み時刻になります (${vodId})`);
+  vodChannel = channel;
+  if (!container) return;
+
+  const cap = new ChatCapture({
+    lineSelector: SELECTORS.vod.chatLine,
+    extract: (line) => extractVodMessage(line, { channel, vodId, vodStart }),
+  });
+  capture = cap;
+  cap.start(container);
+  scheduleSelfCheck(cap);
+}
+
+function scheduleSelfCheck(cap: ChatCapture): void {
+  setTimeout(() => {
+    if (capture === cap && cap.stats.seen === 0) warnNoMessages();
+  }, SELF_CHECK_MS);
 }
 
 function waitForContainer(selector: string, token: number): Promise<Element | null> {
   return new Promise((resolve) => {
     const started = Date.now();
     const tick = () => {
-      if (token !== containerWaitToken) return resolve(null);
+      if (token !== setupToken) return resolve(null);
       const el = document.querySelector(selector);
       if (el) return resolve(el);
       if (Date.now() - started > CONTAINER_WAIT_MAX_MS) return resolve(null);
@@ -75,7 +120,8 @@ function popoverContext() {
   if (current.kind === 'live') {
     return { channel: current.channel, enabled: !current.modView || settings.showOnModView };
   }
-  return { channel: null, enabled: current.kind === 'vod' };
+  if (current.kind === 'vod') return { channel: vodChannel, enabled: true };
+  return { channel: null, enabled: false };
 }
 
 function main(): void {

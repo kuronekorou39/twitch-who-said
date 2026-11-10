@@ -53,7 +53,7 @@ describe('ingestBatch', () => {
     expect((await getUserStats(db, 'alice')).count).toBe(1);
   });
 
-  it('±2 秒以内の同 user/channel/text は近傍重複としてスキップ', async () => {
+  it('±10 秒以内の同 user/channel/text は近傍重複としてスキップ', async () => {
     const db = await getDb();
     await ingestBatch(db, [item({ ts: T0 })], new Set());
     const res = await ingestBatch(
@@ -61,7 +61,7 @@ describe('ingestBatch', () => {
       [
         item({ ts: T0 + 1500 }), // 別の秒 → 別 id になるが近傍重複
         item({ ts: T0 + 1500, text: 'different' }), // 本文が違う → 保存
-        item({ ts: T0 + 3000 }), // ウィンドウ外 → 保存
+        item({ ts: T0 + 15_000 }), // ウィンドウ外 → 保存
       ],
       new Set(),
     );

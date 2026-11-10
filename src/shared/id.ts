@@ -7,8 +7,13 @@
 /** ハッシュ ID の長さ(16 進) */
 const HASH_ID_LENGTH = 20;
 
-/** ライブと VOD で同じ発言が別 ID になったときの近傍重複判定ウィンドウ(ms) */
-export const NEAR_DUP_WINDOW_MS = 2000;
+/**
+ * ライブと VOD で同じ発言が別 ID になったときの近傍重複判定ウィンドウ(ms)。
+ * VOD の ts は「配信開始日時(uploadDate) + 再生位置」の推定値で、ライブ取り込み時刻とは
+ * 数秒ずれる(実測で開始日時だけでも 5 秒前後)。同一 user/channel/text が 10 秒以内に
+ * 2 回あるケースは稀なので、取りこぼしより広めに取る。
+ */
+export const NEAR_DUP_WINDOW_MS = 10_000;
 
 export function hashIdInput(channel: string, user: string, text: string, ts: number): string {
   return `${channel}\n${user}\n${text}\n${Math.round(ts / 1000)}`;

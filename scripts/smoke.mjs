@@ -37,14 +37,21 @@ try {
     const v = process.env.THEME === 'dark' ? '1' : '0';
     await page.evaluateOnNewDocument((theme) => localStorage.setItem('twilight.theme', theme), v);
   }
-  await page.goto(popout ? `https://www.twitch.tv/popout/${channel}/chat` : `https://www.twitch.tv/${channel}`, { waitUntil: 'domcontentloaded' });
+  // VOD=<id> なら VOD ページ(10 分地点から再生)で確認する
+  const vodId = process.env.VOD;
+  const url = vodId
+    ? `https://www.twitch.tv/videos/${vodId}?t=0h10m0s`
+    : popout
+      ? `https://www.twitch.tv/popout/${channel}/chat`
+      : `https://www.twitch.tv/${channel}`;
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
   console.log(`watching chat for ${waitSec}s ...`);
   await new Promise((r) => setTimeout(r, waitSec * 1000));
 
   // --- ポップオーバー: 最新行のユーザー名をクリックし、純正カードの隣に出ることを確認 ---
   const shotDir = process.env.SHOT_DIR ?? '.cache';
   const popoverInfo = await (async () => {
-    const names = await page.$$('.chat-line__message[data-a-user] .chat-author__display-name');
+    const names = await page.$$('.chat-line__message[data-a-user] .chat-author__display-name, .vod-message .chat-author__display-name');
     if (names.length === 0) return { error: 'no chat lines' };
     const target = names[names.length - 1];
     await target.scrollIntoView();
@@ -74,7 +81,7 @@ try {
         footer: root?.querySelector('.footer')?.textContent,
       };
     });
-    await page.screenshot({ path: `${shotDir}/popover-${popout ? 'popout' : 'channel'}.png` });
+    await page.screenshot({ path: `${shotDir}/popover-${vodId ? 'vod' : popout ? 'popout' : 'channel'}.png` });
     // ポップオーバー内をクリックしても純正カードが閉じないこと
     const hostEl = await page.$('#ws-popover');
     const box = hostEl ? await hostEl.boundingBox() : null;
@@ -117,7 +124,8 @@ try {
     const db = await new Promise((res, rej) => { const r = indexedDB.open('twitch-who-said'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
     const users = await new Promise((res) => { const r = db.transaction('users').objectStore('users').index('by_count').openCursor(null, 'prev'); const out = []; r.onsuccess = () => { const c = r.result; if (c && out.length < 3) { out.push(c.value); c.continue(); } else res(out); }; });
     const q = await chrome.runtime.sendMessage({ type: 'ws:query', user: users[0]?.user ?? '', limit: 5 });
-    return { st, topUsers: users.map((u) => `${u.user}(${u.displayName}) x${u.count}`), sample: q.items.map((m) => `[${m.channel}] ${m.displayName}: ${m.text}${m.badges ? ' badges=' + m.badges.join('|') : ''} color=${m.color}`) };
+    const fmt = (m) => `[${m.channel}] ${m.source}${m.vodId ? ' vod=' + m.vodId + ' @' + m.offsetSec + 's' : ''} ${new Date(m.ts).toISOString()} ${m.displayName}: ${m.text}${m.badges ? ' badges=' + m.badges.join('|') : ''} color=${m.color}`;
+    return { st, topUsers: users.map((u) => `${u.user}(${u.displayName}) x${u.count}`), sample: q.items.map(fmt) };
   });
   console.log(JSON.stringify(sample, null, 1));
 } finally {
