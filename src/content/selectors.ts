@@ -9,6 +9,8 @@
  * - 本文: [data-a-target="chat-line-message-body"] 配下。テキストは span.text-fragment、
  *          エモートは img.chat-line__message--emote[alt="<emote名>"]
  * - メッセージ ID: DOM 上に存在しない(data-a-msg-id 等は 0 件) → 内容ハッシュで代替
+ * - 純正ビューワーカード: [data-a-target="chat-user-card"] レイヤー内に [data-a-target="viewer-card"](幅 340px)。
+ *   ドラッグ可能で、位置は [data-a-target="viewer-card-position"] の style(top/left)で決まる
  */
 export const SELECTORS = {
   live: {
@@ -34,6 +36,15 @@ export const SELECTORS = {
     timestamp: '.video-chat__message-timestamp',
   },
   usernameClickTarget: '.chat-author__display-name, .video-chat__message-author',
+  /** Twitch 純正のビューワーカード。ポップオーバーの位置合わせと閉じる検知に使う */
+  viewerCard: {
+    /** カードが挿入される常設のレイヤー(カードが閉じていても存在する) */
+    layer: '[data-a-target="chat-user-card"], .viewer-card-layer',
+    /** カード本体。閉じると DOM から消える */
+    card: '[data-a-target="viewer-card"]',
+    /** ドラッグで top/left の style が変わる要素 */
+    draggable: '[data-a-target="viewer-card-position"]',
+  },
 } as const;
 
 export type LiveSelectors = typeof SELECTORS.live;

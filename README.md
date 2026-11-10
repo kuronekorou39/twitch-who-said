@@ -13,7 +13,7 @@ Twitch のチャット欄でユーザー名をクリックすると、そのユ�
 | マイルストーン | 状態 |
 |---|---|
 | M1 取り込み(ビルド環境 / ライブチャット取り込み / IndexedDB 保存 / 設定画面の統計表示) | 完了 |
-| M2 表示(ユーザー名クリック → ポップオーバー) | 未着手 |
+| M2 表示(ユーザー名クリック → ポップオーバー / スコープ切替 / 絞り込み / ページング) | 完了 |
 | M3 VOD リプレイ取り込み | 未着手 |
 | M4 運用(prune / 除外 / Export, Import) | 未着手 |
 | M5 仕上げ | 未着手 |
@@ -46,6 +46,8 @@ npx @puppeteer/browsers install chrome@stable --path .cache/puppeteer
 npm run build
 node scripts/smoke.mjs <channel> [seconds]   # 例: node scripts/smoke.mjs somechannel 40
 POPOUT=0 node scripts/smoke.mjs <channel>   # ポップアウトではなく通常のチャンネルページで確認
+THEME=dark node scripts/smoke.mjs <channel>  # Twitch のテーマを固定(dark | light)
+SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリーンショット保存先(既定 .cache/)
 ```
 
 ## ディレクトリ構成
@@ -59,7 +61,7 @@ POPOUT=0 node scripts/smoke.mjs <channel>   # ポップアウトではなく通�
 │   │   ├── selectors.ts   #   Twitch DOM セレクタ(DOM 依存はここだけ)
 │   │   ├── page.ts        #   URL → ページ種別 / チャンネル判定
 │   │   ├── extract.ts     #   1 行 → メッセージ変換(純粋関数)
-│   │   └── capture.ts     #   MutationObserver + バッチ送信
+│   │   ├── capture.ts     #   MutationObserver + バッチ送信
 │   ├── sw/                # Service Worker
 │   │   ├── index.ts       #   RPC ハンドラ
 │   │   └── db.ts          #   IndexedDB スキーマ・取り込み・検索・統計
@@ -75,6 +77,7 @@ POPOUT=0 node scripts/smoke.mjs <channel>   # ポップアウトではなく通�
 - 現行の Twitch はメッセージ ID を DOM に出していないため、ID は `sha1(channel, user, text, 秒単位の ts)` の先頭 20 文字です。ライブと VOD で同じ発言が別 ID になる場合は、書き込み時に ±2 秒以内の同一 user / channel / text をスキップして抑止します
 - エモートは `img[alt]` から `:EmoteName:` 形式のプレーンテキストに正規化して保存します
 - content script の isolated world からは `history.pushState` をフックできないため、SPA 遷移は URL のポーリング(1 秒)で検知します
+- ポップオーバーは Twitch 純正のビューワーカード(`[data-a-target="viewer-card"]`)を止めずに、その右隣(画面右端に寄る場合は左隣)へ同じ上端で表示します。カードのドラッグには MutationObserver で追従し、カードが DOM から消えたら一緒に閉じます
 
 ## プライバシー
 

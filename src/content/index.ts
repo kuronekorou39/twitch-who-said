@@ -1,5 +1,9 @@
+import { rpc } from '../shared/messages';
+import { DEFAULT_SETTINGS } from '../shared/settings';
+import type { Settings } from '../shared/types';
 import { LiveCapture } from './capture';
 import { detectPage, samePage, type PageInfo } from './page';
+import { installPopover } from './popover';
 import { SELECTORS } from './selectors';
 
 const LOG_PREFIX = '[Who Said]';
@@ -15,6 +19,7 @@ let current: PageInfo = { kind: 'other' };
 let capture: LiveCapture | null = null;
 let containerWaitToken = 0;
 let warnedOnce = false;
+let settings: Settings = DEFAULT_SETTINGS;
 
 function teardown(): void {
   containerWaitToken++;
@@ -66,8 +71,24 @@ function checkUrl(): void {
   if (!samePage(current, next)) setup(next);
 }
 
+function popoverContext() {
+  if (current.kind === 'live') {
+    return { channel: current.channel, enabled: !current.modView || settings.showOnModView };
+  }
+  return { channel: null, enabled: current.kind === 'vod' };
+}
+
 function main(): void {
   setup(detectPage(location.href));
+  installPopover(popoverContext);
+  void rpc({ type: 'ws:getSettings' }).then((s) => {
+    if (s) settings = s;
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.settings?.newValue) {
+      settings = { ...DEFAULT_SETTINGS, ...(changes.settings.newValue as Partial<Settings>) };
+    }
+  });
   // content script の isolated world からは history.pushState をフックできないため URL をポーリングする
   setInterval(checkUrl, URL_POLL_MS);
   window.addEventListener('popstate', checkUrl);

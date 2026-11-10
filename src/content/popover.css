@@ -1,0 +1,156 @@
+/* Shadow DOM 内。Twitch の CSS 変数を :host 経由で参照し、ダーク/ライトに追従する */
+:host {
+  all: initial;
+  position: fixed;
+  z-index: 5000;
+  width: 320px;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  font-family: var(--font-base, Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--color-text-base, #efeff1);
+  background: var(--color-background-base, #18181b);
+  border: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+  border-radius: var(--border-radius-medium, 0.4rem);
+  box-shadow: var(--shadow-elevation-2, 0 4px 8px rgba(0, 0, 0, 0.4), 0 0 4px rgba(0, 0, 0, 0.4));
+  overflow: hidden;
+}
+:host([hidden]) {
+  display: none;
+}
+* {
+  box-sizing: border-box;
+}
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 6px 12px;
+  flex: none;
+}
+.name {
+  font-weight: 600;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.count {
+  color: var(--color-text-alt-2, #adadb8);
+  font-size: 12px;
+  flex: none;
+}
+.scope {
+  flex: none;
+  padding: 2px 4px;
+  border: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+  border-radius: var(--border-radius-medium, 0.4rem);
+  background: var(--color-background-alt, #1f1f23);
+  font-size: 12px;
+  cursor: pointer;
+}
+.close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--color-text-alt-2, #adadb8);
+}
+.close:hover,
+.scope:hover {
+  background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48));
+}
+
+.filter {
+  flex: none;
+  padding: 0 8px 8px;
+}
+.filter input {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+  border-radius: var(--border-radius-medium, 0.4rem);
+  background: var(--color-background-alt, #1f1f23);
+  outline: none;
+}
+.filter input:focus {
+  border-color: var(--color-text-link, #bf94ff);
+}
+
+.list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+  border-bottom: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
+  padding: 4px 0;
+}
+.item {
+  padding: 5px 12px;
+}
+.item:hover {
+  background: var(--color-background-alt, #1f1f23);
+}
+.meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--color-text-alt-2, #adadb8);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.meta .time {
+  font-variant-numeric: tabular-nums;
+}
+.meta .channel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta a {
+  color: var(--color-text-link, #bf94ff);
+  text-decoration: none;
+  margin-left: auto;
+}
+.meta a:hover {
+  text-decoration: underline;
+}
+.text {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.status {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--color-text-alt-2, #adadb8);
+}
+.sentinel {
+  height: 1px;
+}
+
+.footer {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--color-text-alt-2, #adadb8);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
