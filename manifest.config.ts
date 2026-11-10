@@ -18,6 +18,8 @@ export default defineManifest({
       matches: ['https://www.twitch.tv/*'],
       js: ['src/content/index.ts'],
       run_at: 'document_idle',
+      // 他サイトに埋め込まれたチャット(/embed/<channel>/chat)にも注入する
+      all_frames: true,
     },
   ],
   options_page: 'src/options/options.html',

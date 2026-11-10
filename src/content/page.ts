@@ -58,8 +58,9 @@ export function detectPage(url: string | URL): PageInfo {
     const id = seg[1];
     return id && /^\d+$/.test(id) ? { kind: 'vod', vodId: id } : { kind: 'other' };
   }
-  if (first === 'popout') {
-    // /popout/<channel>/chat
+  if (first === 'popout' || first === 'embed') {
+    // /popout/<channel>/chat(ポップアウト)と /embed/<channel>/chat(他サイトへの埋め込み)。
+    // 埋め込みは iframe 内で動くため、manifest の all_frames で注入される
     const ch = seg[1]?.toLowerCase();
     return ch && seg[2] === 'chat' && LOGIN_RE.test(ch)
       ? { kind: 'live', channel: ch, modView: false }

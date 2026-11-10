@@ -22,6 +22,7 @@
 | ライブの既存行の時刻 | 取り込み時刻 | タイムスタンプ表示 ON なら行の時刻、OFF なら既存行は取り込まない(新着行は取り込み時刻) |
 | manifest | `manifest.json` | CRXJS の `manifest.config.ts`(version は package.json から) |
 | ディレクトリ | `src/sw/db.ts` | DB 層は `src/db/`(SW と設定画面の両方から使う) |
+| 埋め込みチャット | 対象外 | 他サイトに埋め込まれた `/embed/<channel>/chat`(マルチビューなど)も対象。純正カードが出るのでポップオーバーも同じ動作 |
 
 ---
 
@@ -57,7 +58,7 @@ Twitch のチャット欄でユーザー名をクリックすると、そのユ�
 
 | ID | 要件 |
 |---|---|
-| F-1 | ライブチャット（`twitch.tv/<channel>`、ポップアウトチャット `twitch.tv/popout/<channel>/chat`）に流れるメッセージを取り込む |
+| F-1 | ライブチャット（`twitch.tv/<channel>`、ポップアウトチャット `twitch.tv/popout/<channel>/chat`、他サイトに埋め込まれたチャット `twitch.tv/embed/<channel>/chat`）に流れるメッセージを取り込む |
 | F-2 | VOD（`twitch.tv/videos/<id>`）のチャットリプレイに流れるメッセージを取り込む |
 | F-3 | 同一メッセージは 1 件だけ保存する（重複排除） |
 | F-4 | チャット内のユーザー名をクリックしたとき、そのユーザーの保存済みメッセージ一覧をポップオーバーで表示する |
@@ -207,6 +208,7 @@ DB 名: `twitch-who-said` / version 1
 |---|---|---|
 | `/<channel>` | live | パス先頭セグメント（除外: `videos`, `directory`, `settings`, `popout`, `u`, ほか予約語リスト） |
 | `/popout/<channel>/chat` | live | パス 2 番目 |
+| `/embed/<channel>/chat` | live | パス 2 番目（他サイトの iframe 内。content script は `all_frames` で注入） |
 | `/videos/<id>` | vod | チャットリプレイ領域内のチャンネルリンク、または ld+json の `author` |
 | `/moderator/<channel>` | live | パス 2 番目（Mod View。純正ユーザーカードがあるので履歴表示は任意） |
 

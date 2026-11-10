@@ -36,6 +36,8 @@ export const SELECTORS = {
     emoteImg: 'img.chat-line__message--emote',
     badgeImg: 'img.chat-badge',
     timestamp: '.chat-line__timestamp',
+    /** 「ようこそ」などのシステム行。自己診断でチャット行に数えない */
+    statusLine: '.chat-line__status',
   },
   vod: {
     chatContainer: '.video-chat__message-list-wrapper ul',

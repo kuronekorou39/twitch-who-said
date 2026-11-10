@@ -49,6 +49,7 @@ POPOUT=0 node scripts/smoke.mjs <channel>   # ポップアウトではなく通�
 THEME=dark node scripts/smoke.mjs <channel>  # Twitch のテーマを固定(dark | light)
 VOD=<videoId> node scripts/smoke.mjs         # VOD ページ(10 分地点)でチャットリプレイの取り込みを確認
 SPA=1 POPOUT=0 SPA_TO=<channel> node scripts/smoke.mjs <channel>  # ページ内遷移後の追従と取り違えの有無を確認
+EMBED=1 node scripts/smoke.mjs <channel>     # 他サイトに埋め込まれたチャット(iframe の /embed/<channel>/chat)で確認
 SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリーンショット保存先(既定 .cache/)
 ```
 

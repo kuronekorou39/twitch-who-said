@@ -119,7 +119,10 @@ function scheduleSelfCheck(cap: ChatCapture, el: Element, pageLabel: string): vo
   setTimeout(() => {
     if (capture !== cap) return;
     const { seen, extracted } = cap.stats;
-    const suspicious = extracted === 0 && (seen > 0 || el.childElementCount > 0);
+    // システム行(「ようこそ」など)しか無い静かなチャットは疑わない
+    const status = SELECTORS.live.statusLine;
+    const rows = [...el.children].filter((c) => !c.matches(status) && !c.querySelector(status)).length;
+    const suspicious = extracted === 0 && (seen > 0 || rows > 0);
     if (suspicious) warnNoMessages();
     void saveDiag({ at: Date.now(), page: pageLabel, seen, extracted, ok: !suspicious });
   }, SELF_CHECK_MS);

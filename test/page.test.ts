@@ -10,6 +10,8 @@ describe('detectPage', () => {
     ['/popout/somechannel/chat', { kind: 'live', channel: 'somechannel', modView: false }],
     ['/popout/somechannel/chat?popout=', { kind: 'live', channel: 'somechannel', modView: false }],
     ['/moderator/somechannel', { kind: 'live', channel: 'somechannel', modView: true }],
+    ['/embed/somechannel/chat?darkpopout&parent=example.com', { kind: 'live', channel: 'somechannel', modView: false }],
+    ['/embed/SomeChannel/chat', { kind: 'live', channel: 'somechannel', modView: false }],
     ['/videos/123456789', { kind: 'vod', vodId: '123456789' }],
     ['/videos/123456789?t=1h2m3s', { kind: 'vod', vodId: '123456789' }],
     ['/', { kind: 'other' }],
@@ -19,6 +21,7 @@ describe('detectPage', () => {
     ['/somechannel/videos', { kind: 'other' }],
     ['/videos/notanumber', { kind: 'other' }],
     ['/popout/somechannel/notchat', { kind: 'other' }],
+    ['/embed/somechannel', { kind: 'other' }],
     ['/u/somechannel', { kind: 'other' }],
   ])('%s → %o', (path, expected) => {
     expect(detectPage(base + path)).toEqual(expected);

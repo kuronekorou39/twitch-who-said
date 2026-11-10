@@ -14,6 +14,9 @@ const chromePath =
   process.env.CHROME_PATH ??
   (await import('node:fs')).readdirSync('.cache/puppeteer/chrome').filter((d) => d.startsWith('win64-')).map((d) => resolve('.cache/puppeteer/chrome', d, 'chrome-win64/chrome.exe'))[0];
 
+// EMBED=1 のときだけ立てるローカルサーバー(finally で閉じる)
+let server = null;
+
 const browser = await puppeteer.launch({
   executablePath: chromePath,
   headless: false,
@@ -39,12 +42,30 @@ try {
   }
   // VOD=<id> なら VOD ページ(10 分地点から再生)で確認する
   const vodId = process.env.VOD;
-  const url = vodId
+  // EMBED=1: 他サイトに埋め込まれたチャット(/embed/<channel>/chat)で確認する。
+  // parent= は埋め込み元のホスト名でなければならないので、localhost に小さなページを立てて中に iframe を置く
+  const embed = process.env.EMBED === '1';
+  if (embed) {
+    const { createServer } = await import('node:http');
+    const html = `<!doctype html><meta charset="utf-8"><title>embed smoke</title>
+<style>body{margin:0;display:flex;height:100vh;background:#333}iframe{width:400px;height:100%;border:0}div{flex:1;color:#ccc;padding:16px}</style>
+<iframe src="https://www.twitch.tv/embed/${channel}/chat?darkpopout&parent=localhost"></iframe><div>(video area)</div>`;
+    server = createServer((_, res) => {
+      res.setHeader('content-type', 'text/html; charset=utf-8');
+      res.end(html);
+    });
+    await new Promise((r) => server.listen(0, r));
+  }
+  const url = embed
+    ? `http://localhost:${server.address().port}/`
+    : vodId
     ? `https://www.twitch.tv/videos/${vodId}?t=0h10m0s`
     : popout
       ? `https://www.twitch.tv/popout/${channel}/chat`
       : `https://www.twitch.tv/${channel}`;
   await page.goto(url, { waitUntil: 'domcontentloaded' });
+  // 埋め込みでは DOM 操作の相手が iframe になる(iframe は左上に置いてあるので座標は page と一致する)
+  const doc = embed ? await page.waitForFrame((f) => f.url().includes('/embed/'), { timeout: 30_000 }) : page;
   console.log(`watching chat for ${waitSec}s ...`);
   await new Promise((r) => setTimeout(r, waitSec * 1000));
 
@@ -79,18 +100,18 @@ try {
   const shotDir = process.env.SHOT_DIR ?? '.cache';
   const popoverInfo = await (async () => {
     // エモートを含む行があればそのユーザーを優先(エモート表示の確認のため)
-    const withEmote = await page.$$(
+    const withEmote = await doc.$$(
       '.chat-line__message[data-a-user]:has(img.chat-line__message--emote) .chat-author__display-name, .vod-message:has(.video-chat__message img[alt]) .chat-author__display-name',
     );
     const names = withEmote.length
       ? withEmote
-      : await page.$$('.chat-line__message[data-a-user] .chat-author__display-name, .vod-message .chat-author__display-name');
+      : await doc.$$('.chat-line__message[data-a-user] .chat-author__display-name, .vod-message .chat-author__display-name');
     if (names.length === 0) return { error: 'no chat lines' };
     const target = names[names.length - 1];
     await target.scrollIntoView();
     await target.click();
     await new Promise((r) => setTimeout(r, 2500));
-    const info = await page.evaluate(() => {
+    const info = await doc.evaluate(() => {
       const host = document.getElementById('ws-popover');
       const card = document.querySelector('[data-a-target="viewer-card"]');
       const rect = (el) => {
@@ -117,9 +138,9 @@ try {
         footer: root?.querySelector('.footer')?.textContent,
       };
     });
-    await page.screenshot({ path: `${shotDir}/popover-${vodId ? 'vod' : popout ? 'popout' : 'channel'}.png` });
+    await page.screenshot({ path: `${shotDir}/popover-${embed ? 'embed' : vodId ? 'vod' : popout ? 'popout' : 'channel'}.png` });
     // ポップオーバー内をクリックしても純正カードが閉じないこと
-    const hostEl = await page.$('#ws-popover');
+    const hostEl = await doc.$('#ws-popover');
     const box = hostEl ? await hostEl.boundingBox() : null;
     if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await new Promise((r) => setTimeout(r, 500));
@@ -135,7 +156,7 @@ try {
       dragged = { from: { x: Math.round(box.x), y: Math.round(box.y) }, to: { x: Math.round(after.x), y: Math.round(after.y) } };
       await page.screenshot({ path: `${shotDir}/popover-dragged.png` });
       // 「位置を戻す」ボタン(移動後だけ表示)で元の位置に戻す
-      const btn = await page.evaluate(() => {
+      const btn = await doc.evaluate(() => {
         const b = document.getElementById('ws-popover')?.shadowRoot?.querySelector('.reset');
         if (!b || b.hidden) return null;
         const r = b.getBoundingClientRect();
@@ -146,10 +167,10 @@ try {
       await new Promise((r) => setTimeout(r, 300));
       const reset = await hostEl.boundingBox();
       dragged.reset = { x: Math.round(reset.x), y: Math.round(reset.y) };
-      dragged.storedAfterReset = await page.evaluate(() => localStorage.getItem('ws-popover-position'));
+      dragged.storedAfterReset = await doc.evaluate(() => localStorage.getItem('ws-popover-position'));
     }
     const isOpen = () =>
-      page.evaluate(() => ({
+      doc.evaluate(() => ({
         card: !!document.querySelector('[data-a-target="viewer-card"]'),
         host: !document.getElementById('ws-popover')?.hidden,
       }));
@@ -238,4 +259,5 @@ try {
   }
 } finally {
   await browser.close();
+  server?.close();
 }

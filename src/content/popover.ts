@@ -419,8 +419,14 @@ export class Popover {
     const card = this.nativeCard?.isConnected ? this.nativeCard.getBoundingClientRect() : null;
     if (card && card.width > 0) {
       left = card.right + GAP_PX;
-      if (left + WIDTH_PX > vw - EDGE_PX) left = card.left - GAP_PX - WIDTH_PX;
       top = card.top;
+      if (left + WIDTH_PX > vw - EDGE_PX) left = card.left - GAP_PX - WIDTH_PX;
+      if (left < EDGE_PX) {
+        // 左右どちらにも入らない(他サイトに埋め込まれた幅の狭いチャットなど)。カードの下、無理なら上に置く
+        const h = this.host.offsetHeight || MAX_HEIGHT_PX;
+        left = card.left;
+        top = card.bottom + GAP_PX + h <= vh - EDGE_PX ? card.bottom + GAP_PX : card.top - GAP_PX - h;
+      }
     } else {
       left = this.target.anchor.x + GAP_PX;
       if (left + WIDTH_PX > vw - EDGE_PX) left = this.target.anchor.x - GAP_PX - WIDTH_PX;

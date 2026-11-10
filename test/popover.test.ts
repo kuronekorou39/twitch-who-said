@@ -201,6 +201,20 @@ describe('純正カードへの追従', () => {
     await flush();
     expect(p.isOpen).toBe(false);
   });
+
+  it('左右に入らない狭い窓(埋め込みチャット)ではカードの下に置く', async () => {
+    const { Popover } = await import('../src/content/popover');
+    document.body.innerHTML = `<div data-a-target="chat-user-card"><div data-a-target="viewer-card"></div></div>`;
+    const card = document.querySelector<HTMLElement>('[data-a-target="viewer-card"]')!;
+    card.getBoundingClientRect = () => ({ x: 0, y: 100, left: 0, top: 100, right: 340, bottom: 300, width: 340, height: 200 }) as DOMRect;
+    vi.stubGlobal('innerWidth', 400);
+    vi.stubGlobal('innerHeight', 1200);
+    const p = new Popover();
+    p.open({ user: 'alice', displayName: 'Alice', channel: null, anchor: { x: 10, y: 120 } });
+    await flush();
+    expect(p.element.style.left).toBe('4px'); // 画面端の余白まで寄せる
+    expect(p.element.style.top).toBe('308px'); // カードの下端 + 間隔
+  });
 });
 
 describe('エモート表示・チャンネル名・ドラッグ', () => {

@@ -1,6 +1,6 @@
 {
   "name": "twitch-who-said",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Who Said — Twitch Chat History. Twitch のチャット欄でユーザー名をクリックすると、そのユーザーの過去コメントをポップオーバー表示する Chrome 拡張",
   "private": true,
   "type": "module",
