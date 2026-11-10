@@ -117,6 +117,7 @@ try {
     };
   });
   console.log('options stats:', stats);
+  await opts.screenshot({ path: `${shotDir}/options.png`, fullPage: true });
 
   // SW 経由で直接クエリしてサンプルを表示
   const sample = await opts.evaluate(async () => {
@@ -128,6 +129,44 @@ try {
     return { st, topUsers: users.map((u) => `${u.user}(${u.displayName}) x${u.count}`), sample: q.items.map(fmt) };
   });
   console.log(JSON.stringify(sample, null, 1));
+
+  // --- 設定画面の操作: prune → エクスポート → 全削除 → インポートで復元 ---
+  const readStats = () =>
+    opts.evaluate(() => ({ messages: document.getElementById('st-messages')?.textContent, users: document.getElementById('st-users')?.textContent }));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  await opts.click('#btn-prune');
+  await wait(1500);
+  console.log('prune:', await opts.$eval('#prune-status', (e) => e.textContent));
+
+  const { mkdtempSync, readdirSync, readFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dlDir = mkdtempSync(join(tmpdir(), 'ws-export-'));
+  const cdp = await opts.createCDPSession();
+  await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dlDir, eventsEnabled: true });
+  await opts.click('#btn-export');
+  let exported = null;
+  for (let i = 0; i < 20 && !exported; i++) {
+    await wait(500);
+    exported = readdirSync(dlDir).find((f) => f.endsWith('.jsonl'));
+  }
+  const exportPath = exported ? join(dlDir, exported) : null;
+  const exportedLines = exportPath ? readFileSync(exportPath, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+  console.log('export:', exported, 'lines:', exportedLines, '|', await opts.$eval('#export-status', (e) => e.textContent));
+
+  opts.on('dialog', (d) => void d.accept());
+  await opts.click('#btn-clear');
+  await wait(1000);
+  console.log('after clear:', await readStats());
+
+  if (exportPath) {
+    const input = await opts.$('#file-import');
+    await input.uploadFile(exportPath);
+    await wait(3000);
+    console.log('import:', await opts.$eval('#import-status', (e) => e.textContent));
+    console.log('after import:', await readStats());
+  }
 } finally {
   await browser.close();
 }

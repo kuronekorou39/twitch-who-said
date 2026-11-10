@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, getDb, getStats, getUserStats, ingestBatch, queryMessages } from '../src/sw/db';
+import { closeDb, getDb, getStats, getUserStats, ingestBatch, queryMessages } from '../src/db/db';
 import type { IngestItem } from '../src/shared/types';
 
 const T0 = 1_700_000_000_000;

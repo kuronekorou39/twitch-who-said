@@ -49,7 +49,7 @@ function setupLive(channel: string): void {
   void waitForContainer(SELECTORS.live.chatContainer, token).then((container) => {
     if (!container || token !== setupToken) return;
     cap.start(container);
-    scheduleSelfCheck(cap);
+    scheduleSelfCheck(cap, container);
   });
 }
 
@@ -80,12 +80,17 @@ async function setupVod(vodId: string): Promise<void> {
   });
   capture = cap;
   cap.start(container);
-  scheduleSelfCheck(cap);
+  scheduleSelfCheck(cap, container);
 }
 
-function scheduleSelfCheck(cap: ChatCapture): void {
+/**
+ * セレクタ破損の自己診断。コンテナに行らしきものがあるのに 1 件も抽出できなければ警告する。
+ * 誰も発言していない静かなチャットでは警告しない
+ */
+function scheduleSelfCheck(cap: ChatCapture, container: Element): void {
   setTimeout(() => {
-    if (capture === cap && cap.stats.seen === 0) warnNoMessages();
+    if (capture !== cap || cap.stats.extracted > 0) return;
+    if (cap.stats.seen > 0 || container.childElementCount > 0) warnNoMessages();
   }, SELF_CHECK_MS);
 }
 

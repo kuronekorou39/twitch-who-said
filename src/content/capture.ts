@@ -8,6 +8,18 @@ const FLUSH_BATCH_SIZE = 50;
 /** 送信待ちキューの上限。超えたら古い順に捨てる */
 const QUEUE_CAP = 1000;
 
+/** Twitch がログイン中に設定する `login` cookie から自分の login 名を読む(excludeSelf 用) */
+export function readSelfLogin(cookie: string = document.cookie): string | undefined {
+  const m = /(?:^|;\s*)login=([^;]+)/.exec(cookie);
+  if (!m) return undefined;
+  try {
+    const v = decodeURIComponent(m[1]!).trim().toLowerCase();
+    return /^[a-z0-9_]{1,25}$/.test(v) ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface CaptureStats {
   seen: number;
   extracted: number;
@@ -85,6 +97,6 @@ export class ChatCapture {
     const items = this.queue;
     this.queue = [];
     this.stats.flushed += items.length;
-    fireAndForget({ type: 'ws:ingest', items });
+    fireAndForget({ type: 'ws:ingest', items, self: readSelfLogin() });
   }
 }

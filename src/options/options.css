@@ -47,3 +47,9 @@ button.danger { background: transparent; color: var(--danger); border-color: var
 .actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin: 8px 0 0; }
 .badge--warn { background: var(--warn); color: #0e0e10; }
+button.secondary, .button.secondary {
+  background: transparent; color: var(--fg); border-color: var(--border);
+}
+.button { display: inline-block; padding: 6px 12px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; }
+.file-label { margin: 0; display: inline-block; }
+.small { font-size: 12px; }

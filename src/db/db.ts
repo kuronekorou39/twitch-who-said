@@ -5,7 +5,7 @@ import type { ChatMessage, DbStats, IngestItem, UserRecord, UserStats } from '..
 export const DB_NAME = 'twitch-who-said';
 const DB_VERSION = 1;
 
-interface WhoSaidDB extends DBSchema {
+export interface WhoSaidDB extends DBSchema {
   messages: {
     key: string;
     value: ChatMessage;
@@ -30,8 +30,12 @@ interface WhoSaidDB extends DBSchema {
 export type WhoSaidDatabase = IDBPDatabase<WhoSaidDB>;
 
 /** meta store のキー */
-const META_CHANNELS = 'channels';
-const META_LAST_INGEST = 'lastIngestAt';
+export const META_CHANNELS = 'channels';
+export const META_LAST_INGEST = 'lastIngestAt';
+export const META_LAST_PRUNE = 'lastPruneAt';
+
+/** チャンネルごとの件数(meta の `channels`) */
+export type ChannelCounts = Record<string, number>;
 
 let dbPromise: Promise<WhoSaidDatabase> | null = null;
 
@@ -129,7 +133,7 @@ export async function ingestBatch(
   }
 
   if (accepted > 0) {
-    const channels = ((await meta.get(META_CHANNELS))?.value as Record<string, number> | undefined) ?? {};
+    const channels = ((await meta.get(META_CHANNELS))?.value as ChannelCounts | undefined) ?? {};
     for (const [ch, n] of channelDelta) channels[ch] = (channels[ch] ?? 0) + n;
     await meta.put({ key: META_CHANNELS, value: channels });
     await meta.put({ key: META_LAST_INGEST, value: Date.now() });
@@ -209,16 +213,18 @@ export async function getUserStats(db: WhoSaidDatabase, user: string): Promise<U
 export async function getStats(db: WhoSaidDatabase): Promise<DbStats> {
   const tx = db.transaction(['messages', 'users', 'meta'], 'readonly');
   const messages = tx.objectStore('messages');
-  const [count, users, channelsRec, lastIngest, oldest, newest] = await Promise.all([
+  const meta = tx.objectStore('meta');
+  const [count, users, channelsRec, lastIngest, lastPrune, oldest, newest] = await Promise.all([
     messages.count(),
     tx.objectStore('users').count(),
-    tx.objectStore('meta').get(META_CHANNELS),
-    tx.objectStore('meta').get(META_LAST_INGEST),
+    meta.get(META_CHANNELS),
+    meta.get(META_LAST_INGEST),
+    meta.get(META_LAST_PRUNE),
     messages.index('by_ts').openKeyCursor(null, 'next'),
     messages.index('by_ts').openKeyCursor(null, 'prev'),
   ]);
   await tx.done;
-  const channels = (channelsRec?.value as Record<string, number> | undefined) ?? {};
+  const channels = (channelsRec?.value as ChannelCounts | undefined) ?? {};
   return {
     messages: count,
     users,
@@ -226,6 +232,7 @@ export async function getStats(db: WhoSaidDatabase): Promise<DbStats> {
     oldestTs: oldest ? oldest.key : null,
     newestTs: newest ? newest.key : null,
     lastIngestAt: (lastIngest?.value as number | undefined) ?? null,
+    lastPruneAt: (lastPrune?.value as number | undefined) ?? null,
   };
 }
 

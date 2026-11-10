@@ -15,7 +15,7 @@ Twitch のチャット欄でユーザー名をクリックすると、そのユ�
 | M1 取り込み(ビルド環境 / ライブチャット取り込み / IndexedDB 保存 / 設定画面の統計表示) | 完了 |
 | M2 表示(ユーザー名クリック → ポップオーバー / スコープ切替 / 絞り込み / ページング) | 完了 |
 | M3 VOD リプレイ取り込み(開始日時解決 / 近傍重複抑止 / VOD リンク) | 完了 |
-| M4 運用(prune / 除外 / Export, Import) | 未着手 |
+| M4 運用(prune / 除外 / 自分の除外 / Export, Import) | 完了 |
 | M5 仕上げ | 未着手 |
 
 ## インストール(開発ビルド)
@@ -65,8 +65,11 @@ SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリ
 │   │   ├── capture.ts     #   MutationObserver + バッチ送信(ライブ / VOD 共通)
 │   │   ├── vod.ts         #   VOD の配信開始日時・チャンネル解決
 │   ├── sw/                # Service Worker
-│   │   ├── index.ts       #   RPC ハンドラ
-│   │   └── db.ts          #   IndexedDB スキーマ・取り込み・検索・統計
+│   │   └── index.ts       #   RPC ハンドラ、chrome.alarms による定期 prune
+│   ├── db/                # IndexedDB 層(SW と設定画面の両方から使う)
+│   │   ├── db.ts          #   スキーマ・取り込み・検索・統計
+│   │   ├── prune.ts       #   保持ポリシー適用(5,000 件チャンク + yield)
+│   │   └── export.ts      #   JSON Lines のエクスポート / インポート
 │   ├── options/           # 設定画面
 │   └── shared/            # 型・RPC 定義・設定・ID 生成
 ├── test/                  # Vitest(fixtures/ に実 DOM のスナップショット)
@@ -77,6 +80,8 @@ SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリ
 ## 実装メモ
 
 - 現行の Twitch はメッセージ ID を DOM に出していないため、ID は `sha1(channel, user, text, 秒単位の ts)` の先頭 20 文字です。ライブと VOD で同じ発言が別 ID になる場合は、書き込み時に ±10 秒以内の同一 user / channel / text をスキップして抑止します(仕様書の ±2 秒から広げました。VOD の日時は「配信開始日時 + 再生位置」の推定値で、ライブ取り込み時刻と数秒ずれるため)
+- エクスポート / インポートは Service Worker を経由せず、設定画面から直接 IndexedDB(拡張オリジンで共有)を読み書きします。数百万件を `sendMessage` で往復させないためです。仕様書の `ws:export` / `ws:import` RPC は設けていません
+- 自分の発言の除外は、Twitch がログイン時に設定する `login` cookie を content script が読み、取り込みバッチに添えて Service Worker 側で除外します(`cookies` 権限は不要)
 - VOD の配信開始日時は、実行時の DOM には無い ld+json を SSR の HTML(同じ URL を同一オリジンで fetch)から読みます。取得できたら Service Worker 側にキャッシュします。チャンネルは動画情報欄のチャンネルリンクから判定します
 - エモートは `img[alt]` から `:EmoteName:` 形式のプレーンテキストに正規化して保存します
 - content script の isolated world からは `history.pushState` をフックできないため、SPA 遷移は URL のポーリング(1 秒)で検知します

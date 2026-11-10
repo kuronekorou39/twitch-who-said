@@ -2,7 +2,12 @@ import type { ChatMessage, DbStats, IngestItem, Settings, UserStats } from './ty
 
 /** content / options → SW のリクエスト */
 export type Req =
-  | { type: 'ws:ingest'; items: IngestItem[] }
+  | {
+      type: 'ws:ingest';
+      items: IngestItem[];
+      /** ログイン中ユーザーの login(excludeSelf 用)。content script が cookie から読む */
+      self?: string;
+    }
   | {
       type: 'ws:query';
       user: string;
@@ -17,8 +22,6 @@ export type Req =
   | { type: 'ws:stats' }
   | { type: 'ws:prune' }
   | { type: 'ws:clear' }
-  | { type: 'ws:export' }
-  | { type: 'ws:import'; lines: string[] }
   | { type: 'ws:getSettings' }
   | { type: 'ws:setSettings'; patch: Partial<Settings> };
 
@@ -30,10 +33,8 @@ export interface ResMap {
   'ws:getVodStart': { ts: number | null };
   'ws:setVodStart': { ok: true };
   'ws:stats': DbStats;
-  'ws:prune': { deleted: number };
+  'ws:prune': { deleted: number; byRetention: number; byPerUser: number; byTotal: number };
   'ws:clear': { ok: true };
-  'ws:export': { lines: string[] };
-  'ws:import': { imported: number };
   'ws:getSettings': Settings;
   'ws:setSettings': Settings;
 }

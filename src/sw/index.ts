@@ -1,15 +1,42 @@
+import { clearAll, getDb, getMeta, getStats, getUserStats, ingestBatch, META_LAST_PRUNE, queryMessages, setMeta } from '../db/db';
+import { prune } from '../db/prune';
 import type { Req, ResMap } from '../shared/messages';
 import { buildExcludeSet, loadSettings, saveSettings } from '../shared/settings';
-import { clearAll, getDb, getMeta, getStats, getUserStats, ingestBatch, queryMessages, setMeta } from './db';
 
 const VOD_START_META_PREFIX = 'vodStart:';
+const PRUNE_ALARM = 'ws-prune';
+/** 定期 prune の間隔(分)と、起動時に prune を走らせる「前回からの経過」しきい値 */
+const PRUNE_PERIOD_MIN = 24 * 60;
+const PRUNE_STALE_MS = 12 * 60 * 60 * 1000;
+
+let pruneRunning: Promise<ResMap['ws:prune']> | null = null;
+
+/** prune は同時に 1 つだけ走らせる */
+function runPrune(): Promise<ResMap['ws:prune']> {
+  pruneRunning ??= (async () => {
+    try {
+      const [db, settings] = await Promise.all([getDb(), loadSettings()]);
+      const r = await prune(db, settings);
+      return { deleted: r.deleted, byRetention: r.byRetention, byPerUser: r.byPerUser, byTotal: r.byTotal };
+    } finally {
+      pruneRunning = null;
+    }
+  })();
+  return pruneRunning;
+}
+
+async function pruneIfStale(): Promise<void> {
+  const db = await getDb();
+  const last = (await getMeta<number>(db, META_LAST_PRUNE)) ?? 0;
+  if (Date.now() - last >= PRUNE_STALE_MS) await runPrune();
+}
 
 async function handle(req: Req): Promise<ResMap[Req['type']]> {
   const db = await getDb();
   switch (req.type) {
     case 'ws:ingest': {
       const settings = await loadSettings();
-      return ingestBatch(db, req.items, buildExcludeSet(settings));
+      return ingestBatch(db, req.items, buildExcludeSet(settings, req.self));
     }
     case 'ws:query':
       return queryMessages(db, req);
@@ -30,11 +57,7 @@ async function handle(req: Req): Promise<ResMap[Req['type']]> {
     case 'ws:setSettings':
       return saveSettings(req.patch);
     case 'ws:prune':
-      return { deleted: 0 }; // M4 で実装
-    case 'ws:export':
-      return { lines: [] }; // M4 で実装
-    case 'ws:import':
-      return { imported: 0 }; // M4 で実装
+      return runPrune();
   }
 }
 
@@ -55,3 +78,17 @@ function isReq(msg: unknown): msg is Req {
     (msg as { type: string }).type.startsWith('ws:')
   );
 }
+
+// ---- 定期 prune ----
+chrome.runtime.onInstalled.addListener(() => {
+  void chrome.alarms.create(PRUNE_ALARM, { periodInMinutes: PRUNE_PERIOD_MIN });
+});
+chrome.runtime.onStartup.addListener(() => {
+  void chrome.alarms.get(PRUNE_ALARM).then((a) => {
+    if (!a) void chrome.alarms.create(PRUNE_ALARM, { periodInMinutes: PRUNE_PERIOD_MIN });
+  });
+  void pruneIfStale().catch((e: unknown) => console.error('[Who Said] prune failed', e));
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === PRUNE_ALARM) void runPrune().catch((e: unknown) => console.error('[Who Said] prune failed', e));
+});

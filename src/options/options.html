@@ -21,6 +21,7 @@
           <dt>最古</dt><dd id="st-oldest">–</dd>
           <dt>最新</dt><dd id="st-newest">–</dd>
           <dt>最終取り込み</dt><dd id="st-last-ingest">–</dd>
+          <dt>最終 prune</dt><dd id="st-last-prune">–</dd>
           <dt>推定使用容量</dt><dd id="st-usage">–</dd>
         </dl>
         <button id="btn-refresh" type="button">更新</button>
@@ -32,11 +33,12 @@
           <label>保持日数(0 = 無期限)<input name="retentionDays" type="number" min="0" step="1" /></label>
           <label>ユーザーあたり上限件数(0 = 無制限)<input name="maxPerUser" type="number" min="0" step="1" /></label>
           <label>全体上限件数(0 = 無制限)<input name="maxTotal" type="number" min="0" step="1" /></label>
+          <p class="muted small">保持ポリシーは 1 日 1 回(および拡張の起動時に 12 時間以上経過していれば)自動で適用されます。</p>
 
           <h2>除外</h2>
           <label>除外ユーザー(login 名、改行またはカンマ区切り)<textarea name="excludeUsers" rows="4"></textarea></label>
           <label class="check"><input name="knownBotsPreset" type="checkbox" /> 既知ボット(nightbot, streamelements, fossabot, moobot, streamlabs 等)を除外</label>
-          <label class="check"><input name="excludeSelf" type="checkbox" /> 自分の発言を除外</label>
+          <label class="check"><input name="excludeSelf" type="checkbox" /> 自分の発言を除外(Twitch にログイン中のアカウント)</label>
           <label class="check"><input name="showOnModView" type="checkbox" /> Mod View でもポップオーバーを表示</label>
 
           <div class="actions">
@@ -48,6 +50,21 @@
 
       <section>
         <h2>データ</h2>
+        <div class="actions">
+          <button id="btn-prune" type="button" class="secondary">今すぐ prune 実行</button>
+          <span id="prune-status" class="muted"></span>
+        </div>
+        <div class="actions">
+          <button id="btn-export" type="button" class="secondary">エクスポート(JSON Lines)</button>
+          <span id="export-status" class="muted"></span>
+        </div>
+        <div class="actions">
+          <label class="file-label">
+            <input id="file-import" type="file" accept=".jsonl,.json,.txt,application/jsonl,text/plain" hidden />
+            <span class="button secondary">インポート(JSON Lines)</span>
+          </label>
+          <span id="import-status" class="muted"></span>
+        </div>
         <div class="actions">
           <button id="btn-clear" type="button" class="danger">すべて削除</button>
         </div>

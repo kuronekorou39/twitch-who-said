@@ -59,6 +59,8 @@ export interface DbStats {
   newestTs: number | null;
   /** 最後に 1 件でも取り込んだ日時 */
   lastIngestAt: number | null;
+  /** 最後に prune を実行した日時 */
+  lastPruneAt: number | null;
 }
 
 export interface UserStats {
