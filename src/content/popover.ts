@@ -15,6 +15,10 @@ const GAP_PX = 8;
 const EDGE_PX = 4;
 const WIDTH_PX = 320;
 const MAX_HEIGHT_PX = 480;
+/** ドラッグで動かした位置の保存キー(端末ごとの好みなので localStorage) */
+const POSITION_STORAGE_KEY = 'ws-popover-position';
+/** 本文中の `:name:` を見つける。name は空白とコロンを含まない */
+const EMOTE_TOKEN_RE = /:([^\s:]+):/g;
 
 export interface PopoverTarget {
   user: string;
@@ -32,6 +36,10 @@ export interface PopoverContext {
 }
 
 type Scope = 'channel' | 'all';
+interface Point {
+  x: number;
+  y: number;
+}
 
 /** 直近に選んだスコープ(ページ内で保持) */
 let lastScope: Scope = 'channel';
@@ -39,6 +47,8 @@ let lastScope: Scope = 'channel';
 export class Popover {
   private readonly host: HTMLElement;
   private readonly els: {
+    header: HTMLElement;
+    reset: HTMLButtonElement;
     name: HTMLElement;
     count: HTMLElement;
     scope: HTMLSelectElement;
@@ -63,6 +73,10 @@ export class Popover {
   private nativeWaitUntil = 0;
   private nativeWaitRaf = 0;
   private readonly sentinelObserver: IntersectionObserver;
+  /** ユーザーがドラッグで決めた位置。設定されている間は純正カードに追従しない */
+  private manualPos: Point | null = loadPosition();
+  /** エモート名 → URL のキャッシュ(ページ内) */
+  private readonly emoteCache = new Map<string, string | null>();
 
   constructor() {
     this.host = document.createElement('div');
@@ -74,10 +88,11 @@ export class Popover {
     root.adoptedStyleSheets = [sheet];
 
     root.innerHTML = `
-      <div class="header">
+      <div class="header" title="ドラッグで移動">
         <span class="name"></span>
         <span class="count"></span>
         <select class="scope" aria-label="表示範囲"></select>
+        <button class="reset" type="button" title="元の位置(純正カードの隣)に戻す" aria-label="位置を戻す" hidden>↺</button>
         <button class="close" type="button" aria-label="閉じる">×</button>
       </div>
       <div class="filter"><input type="search" placeholder="絞り込み…" aria-label="絞り込み" /></div>
@@ -88,6 +103,8 @@ export class Popover {
       <div class="footer"><span class="footer-left"></span><span class="footer-right"></span></div>`;
     const q = <T extends HTMLElement>(sel: string) => root.querySelector(sel) as T;
     this.els = {
+      header: q('.header'),
+      reset: q<HTMLButtonElement>('.reset'),
       name: q('.name'),
       count: q('.count'),
       scope: q<HTMLSelectElement>('.scope'),
@@ -103,6 +120,7 @@ export class Popover {
     this.els.scope.addEventListener('change', () => {
       this.scope = this.els.scope.value as Scope;
       lastScope = this.scope;
+      this.applyScopeClass();
       void this.load(true);
     });
     this.els.filter.addEventListener('input', () => {
@@ -112,6 +130,7 @@ export class Popover {
         void this.load(true);
       }, FILTER_DEBOUNCE_MS);
     });
+    this.installDrag();
     // ポップオーバー内の操作が Twitch 側の「外側クリック」扱いにならないよう伝播を止める
     for (const type of ['mousedown', 'pointerdown', 'click', 'keydown', 'wheel'] as const) {
       this.host.addEventListener(type, (e) => e.stopPropagation());
@@ -157,7 +176,7 @@ export class Popover {
     this.keyword = '';
     this.els.filter.value = '';
 
-    const dark = document.documentElement.classList.contains('tw-root--theme-dark');
+    const dark = isDarkTheme();
     this.els.name.textContent = target.displayName;
     this.els.name.title = target.user;
     this.els.name.style.color = adjustNameColor(target.color, dark) ?? '';
@@ -170,11 +189,13 @@ export class Popover {
     this.els.scope.append(makeOption('全チャンネル', 'all'));
     this.scope = target.channel ? lastScope : 'all';
     this.els.scope.value = this.scope;
+    this.applyScopeClass();
 
     this.host.hidden = false;
     this.host.style.left = `${target.anchor.x}px`;
     this.host.style.top = `${target.anchor.y}px`;
     this.trackNativeCard();
+    if (this.manualPos) this.reposition();
     void this.load(true);
     void this.loadStats();
   }
@@ -186,6 +207,10 @@ export class Popover {
     this.requestSeq++;
     this.untrackNativeCard();
     this.els.list.querySelectorAll('.item').forEach((n) => n.remove());
+  }
+
+  private applyScopeClass(): void {
+    this.els.list.classList.toggle('single-channel', this.scope === 'channel');
   }
 
   // ---- データ取得 ----
@@ -212,7 +237,9 @@ export class Popover {
         limit: PAGE_SIZE,
       });
       if (seq !== this.requestSeq) return; // 古い応答
-      this.appendItems(res.items);
+      const emotes = await this.resolveEmotes(res.items);
+      if (seq !== this.requestSeq) return;
+      this.appendItems(res.items, emotes);
       this.hasMore = res.hasMore;
       const last = res.items.at(-1);
       if (last) this.before = last.ts;
@@ -223,6 +250,25 @@ export class Popover {
     } finally {
       if (seq === this.requestSeq) this.loading = false;
     }
+  }
+
+  /** 本文に含まれる `:name:` のうち未解決のものを SW に問い合わせ、キャッシュに入れて返す */
+  private async resolveEmotes(items: ChatMessage[]): Promise<Map<string, string>> {
+    const unknown = new Set<string>();
+    for (const m of items) {
+      for (const name of emoteNames(m.text)) if (!this.emoteCache.has(name)) unknown.add(name);
+    }
+    if (unknown.size > 0) {
+      try {
+        const found = (await rpc({ type: 'ws:emotes', names: [...unknown] })) ?? {};
+        for (const name of unknown) this.emoteCache.set(name, found[name] ?? null);
+      } catch {
+        /* 取れなければテキストのまま表示 */
+      }
+    }
+    const out = new Map<string, string>();
+    for (const [name, url] of this.emoteCache) if (url) out.set(name, url);
+    return out;
   }
 
   private async loadStats(): Promise<void> {
@@ -245,12 +291,62 @@ export class Popover {
     this.els.status.hidden = !text;
   }
 
-  private appendItems(items: ChatMessage[]): void {
+  private appendItems(items: ChatMessage[], emotes: Map<string, string>): void {
     if (items.length === 0) return;
     const frag = document.createDocumentFragment();
     const now = Date.now();
-    for (const m of items) frag.append(renderItem(m, now));
+    const dark = isDarkTheme();
+    for (const m of items) frag.append(renderItem(m, now, emotes, dark));
     this.els.list.insertBefore(frag, this.els.sentinel);
+  }
+
+  // ---- ドラッグ移動 ----
+
+  private installDrag(): void {
+    const header = this.els.header;
+    let start: Point | null = null;
+    let origin: Point | null = null;
+    header.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if ((e.target as Element).closest('select, button, input')) return;
+      start = { x: e.clientX, y: e.clientY };
+      // 位置は常に style.left/top で与えているので、レイアウトに依存せずそこから読む
+      origin = { x: parseFloat(this.host.style.left) || 0, y: parseFloat(this.host.style.top) || 0 };
+      header.classList.add('dragging');
+      header.setPointerCapture?.(e.pointerId);
+      // preventDefault すると後続の click / dblclick が発火しなくなるので呼ばない(文字選択は CSS で抑止)
+    });
+    header.addEventListener('pointermove', (e) => {
+      if (!start || !origin) return;
+      this.manualPos = this.clamp({ x: origin.x + e.clientX - start.x, y: origin.y + e.clientY - start.y });
+      this.applyPosition(this.manualPos);
+    });
+    const end = () => {
+      if (!start) return;
+      start = origin = null;
+      header.classList.remove('dragging');
+      if (this.manualPos) savePosition(this.manualPos);
+      this.updateResetButton();
+    };
+    header.addEventListener('pointerup', end);
+    header.addEventListener('pointercancel', end);
+    // 自動配置(純正カードの隣)に戻す。ボタンは動かしたときだけ出す
+    const reset = () => {
+      this.manualPos = null;
+      savePosition(null);
+      this.updateResetButton();
+      this.reposition();
+    };
+    this.els.reset.addEventListener('click', reset);
+    header.addEventListener('dblclick', (e) => {
+      if ((e.target as Element).closest('select, button, input')) return;
+      reset();
+    });
+    this.updateResetButton();
+  }
+
+  private updateResetButton(): void {
+    this.els.reset.hidden = !this.manualPos;
   }
 
   // ---- 純正カードへの追従 ----
@@ -310,9 +406,14 @@ export class Popover {
 
   private reposition(): void {
     if (!this.isOpen || !this.target) return;
-    const vw = window.innerWidth;
     const vh = window.innerHeight;
     this.host.style.maxHeight = `${Math.min(MAX_HEIGHT_PX, vh - EDGE_PX * 2)}px`;
+    if (this.manualPos) {
+      this.manualPos = this.clamp(this.manualPos);
+      this.applyPosition(this.manualPos);
+      return;
+    }
+    const vw = window.innerWidth;
     let left: number;
     let top: number;
     const card = this.nativeCard?.isConnected ? this.nativeCard.getBoundingClientRect() : null;
@@ -325,11 +426,44 @@ export class Popover {
       if (left + WIDTH_PX > vw - EDGE_PX) left = this.target.anchor.x - GAP_PX - WIDTH_PX;
       top = this.target.anchor.y;
     }
+    this.applyPosition(this.clamp({ x: left, y: top }));
+  }
+
+  private clamp(p: Point): Point {
     const h = this.host.offsetHeight || MAX_HEIGHT_PX;
-    left = Math.max(EDGE_PX, Math.min(left, vw - WIDTH_PX - EDGE_PX));
-    top = Math.max(EDGE_PX, Math.min(top, vh - h - EDGE_PX));
-    this.host.style.left = `${Math.round(left)}px`;
-    this.host.style.top = `${Math.round(top)}px`;
+    return {
+      x: Math.max(EDGE_PX, Math.min(p.x, window.innerWidth - WIDTH_PX - EDGE_PX)),
+      y: Math.max(EDGE_PX, Math.min(p.y, window.innerHeight - h - EDGE_PX)),
+    };
+  }
+
+  private applyPosition(p: Point): void {
+    this.host.style.left = `${Math.round(p.x)}px`;
+    this.host.style.top = `${Math.round(p.y)}px`;
+  }
+}
+
+function isDarkTheme(): boolean {
+  return document.documentElement.classList.contains('tw-root--theme-dark');
+}
+
+function loadPosition(): Point | null {
+  try {
+    const raw = localStorage.getItem(POSITION_STORAGE_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<Point>;
+    return typeof p.x === 'number' && typeof p.y === 'number' ? { x: p.x, y: p.y } : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePosition(p: Point | null): void {
+  try {
+    if (p) localStorage.setItem(POSITION_STORAGE_KEY, JSON.stringify(p));
+    else localStorage.removeItem(POSITION_STORAGE_KEY);
+  } catch {
+    /* localStorage が使えない環境では位置を覚えないだけ */
   }
 }
 
@@ -340,7 +474,47 @@ function makeOption(label: string, value: string): HTMLOptionElement {
   return o;
 }
 
-function renderItem(m: ChatMessage, now: number): HTMLElement {
+/** 本文中の `:name:` の name を列挙する */
+export function emoteNames(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(EMOTE_TOKEN_RE)) out.push(m[1]!);
+  return out;
+}
+
+/**
+ * Twitch のエモート URL はテーマ別(/default/dark/1.0 など)。保存時のテーマに関わらず
+ * 表示時のテーマに合わせる
+ */
+export function themedEmoteUrl(url: string, dark: boolean): string {
+  return url.replace(/\/(dark|light)\//, dark ? '/dark/' : '/light/');
+}
+
+/** 本文を、既知のエモートは画像、それ以外はテキストとして要素に流し込む */
+export function renderText(el: HTMLElement, text: string, emotes: Map<string, string>, dark: boolean): void {
+  if (emotes.size === 0 || !text.includes(':')) {
+    el.textContent = text;
+    return;
+  }
+  let last = 0;
+  for (const m of text.matchAll(EMOTE_TOKEN_RE)) {
+    const name = m[1]!;
+    const url = emotes.get(name);
+    if (!url) continue;
+    const start = m.index;
+    if (start > last) el.append(text.slice(last, start));
+    const img = document.createElement('img');
+    img.className = 'emote';
+    img.src = themedEmoteUrl(url, dark);
+    img.alt = name;
+    img.title = name;
+    img.loading = 'lazy';
+    el.append(img);
+    last = start + m[0].length;
+  }
+  if (last < text.length) el.append(text.slice(last));
+}
+
+function renderItem(m: ChatMessage, now: number, emotes: Map<string, string>, dark: boolean): HTMLElement {
   const item = document.createElement('div');
   item.className = 'item';
 
@@ -365,7 +539,7 @@ function renderItem(m: ChatMessage, now: number): HTMLElement {
 
   const text = document.createElement('div');
   text.className = 'text';
-  text.textContent = m.text;
+  renderText(text, m.text, emotes, dark);
 
   item.append(meta, text);
   return item;

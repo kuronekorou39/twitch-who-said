@@ -7,7 +7,10 @@ export type Req =
       items: IngestItem[];
       /** ログイン中ユーザーの login(excludeSelf 用)。content script が cookie から読む */
       self?: string;
+      /** このバッチで新しく見たエモート名 → 画像 URL */
+      emotes?: Record<string, string>;
     }
+  | { type: 'ws:emotes'; names: string[] }
   | {
       type: 'ws:query';
       user: string;
@@ -30,6 +33,7 @@ export interface ResMap {
   'ws:ingest': { accepted: number; skipped: number };
   'ws:query': { items: ChatMessage[]; hasMore: boolean };
   'ws:userStats': UserStats;
+  'ws:emotes': Record<string, string>;
   'ws:getVodStart': { ts: number | null };
   'ws:setVodStart': { ok: true };
   'ws:stats': DbStats;

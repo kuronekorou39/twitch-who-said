@@ -3,7 +3,7 @@ import { messageHashId, NEAR_DUP_WINDOW_MS } from '../shared/id';
 import type { ChatMessage, DbStats, IngestItem, UserRecord, UserStats } from '../shared/types';
 
 export const DB_NAME = 'twitch-who-said';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface WhoSaidDB extends DBSchema {
   messages: {
@@ -25,6 +25,17 @@ export interface WhoSaidDB extends DBSchema {
     key: string;
     value: { key: string; value: unknown };
   };
+  /** エモート名 → 画像 URL(ポップオーバーで `:name:` を画像にするためのキャッシュ) */
+  emotes: {
+    key: string;
+    value: EmoteRecord;
+  };
+}
+
+export interface EmoteRecord {
+  name: string;
+  url: string;
+  seenAt: number;
 }
 
 export type WhoSaidDatabase = IDBPDatabase<WhoSaidDB>;
@@ -41,15 +52,20 @@ let dbPromise: Promise<WhoSaidDatabase> | null = null;
 
 export function getDb(): Promise<WhoSaidDatabase> {
   dbPromise ??= openDB<WhoSaidDB>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      const messages = db.createObjectStore('messages', { keyPath: 'id' });
-      messages.createIndex('by_user_ts', ['user', 'ts']);
-      messages.createIndex('by_user_channel_ts', ['user', 'channel', 'ts']);
-      messages.createIndex('by_ts', 'ts');
-      messages.createIndex('by_captured', 'capturedAt');
-      const users = db.createObjectStore('users', { keyPath: 'user' });
-      users.createIndex('by_count', 'count');
-      db.createObjectStore('meta', { keyPath: 'key' });
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        const messages = db.createObjectStore('messages', { keyPath: 'id' });
+        messages.createIndex('by_user_ts', ['user', 'ts']);
+        messages.createIndex('by_user_channel_ts', ['user', 'channel', 'ts']);
+        messages.createIndex('by_ts', 'ts');
+        messages.createIndex('by_captured', 'capturedAt');
+        const users = db.createObjectStore('users', { keyPath: 'user' });
+        users.createIndex('by_count', 'count');
+        db.createObjectStore('meta', { keyPath: 'key' });
+      }
+      if (oldVersion < 2) {
+        db.createObjectStore('emotes', { keyPath: 'name' });
+      }
     },
   });
   return dbPromise;
@@ -237,13 +253,42 @@ export async function getStats(db: WhoSaidDatabase): Promise<DbStats> {
 }
 
 export async function clearAll(db: WhoSaidDatabase): Promise<void> {
-  const tx = db.transaction(['messages', 'users', 'meta'], 'readwrite');
+  const tx = db.transaction(['messages', 'users', 'meta', 'emotes'], 'readwrite');
   await Promise.all([
     tx.objectStore('messages').clear(),
     tx.objectStore('users').clear(),
     tx.objectStore('meta').clear(),
+    tx.objectStore('emotes').clear(),
   ]);
   await tx.done;
+}
+
+/** エモート名 → URL を保存(上書き)。content script が新しく見たものだけ送ってくる */
+export async function putEmotes(db: WhoSaidDatabase, emotes: Record<string, string>): Promise<void> {
+  const names = Object.keys(emotes);
+  if (names.length === 0) return;
+  const tx = db.transaction('emotes', 'readwrite');
+  const now = Date.now();
+  for (const name of names) {
+    const url = emotes[name];
+    if (url) await tx.store.put({ name, url, seenAt: now });
+  }
+  await tx.done;
+}
+
+/** 指定した名前のうち既知のものだけ URL を返す */
+export async function getEmotes(db: WhoSaidDatabase, names: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (names.length === 0) return out;
+  const tx = db.transaction('emotes', 'readonly');
+  await Promise.all(
+    [...new Set(names)].map(async (name) => {
+      const rec = await tx.store.get(name);
+      if (rec) out[name] = rec.url;
+    }),
+  );
+  await tx.done;
+  return out;
 }
 
 export async function getMeta<T>(db: WhoSaidDatabase, key: string): Promise<T | undefined> {

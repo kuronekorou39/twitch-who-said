@@ -37,6 +37,12 @@ select {
   gap: 6px;
   padding: 8px 8px 6px 12px;
   flex: none;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.header.dragging {
+  cursor: grabbing;
 }
 .name {
   font-weight: 600;
@@ -61,7 +67,8 @@ select {
   font-size: 12px;
   cursor: pointer;
 }
-.close {
+.close,
+.reset {
   flex: none;
   width: 24px;
   height: 24px;
@@ -73,7 +80,11 @@ select {
   line-height: 1;
   color: var(--color-text-alt-2, #adadb8);
 }
+.reset[hidden] {
+  display: none;
+}
 .close:hover,
+.reset:hover,
 .scope:hover {
   background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48));
 }
@@ -124,6 +135,10 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 「このチャンネル」表示のときはチャンネル名が冗長なので出さない */
+.list.single-channel .channel {
+  display: none;
+}
 .meta a {
   color: var(--color-text-link, #bf94ff);
   text-decoration: none;
@@ -135,6 +150,12 @@ select {
 .text {
   word-break: break-word;
   white-space: pre-wrap;
+}
+.text .emote {
+  height: 24px;
+  width: auto;
+  vertical-align: middle;
+  margin: -4px 1px;
 }
 .status {
   padding: 16px 12px;

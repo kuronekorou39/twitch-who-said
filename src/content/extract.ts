@@ -5,6 +5,11 @@ export interface LiveContext {
   channel: string;
   /** 取り込み時刻を注入可能にする(テスト用) */
   now?: () => number;
+  /**
+   * 監視開始時に既に表示されていた行か。既存行の発言時刻は取り込み時刻では無いので、
+   * Twitch の「タイムスタンプ表示」設定で出る行内の時刻(HH:MM)を使い、無ければ捨てる
+   */
+  existing?: boolean;
 }
 
 export interface VodContext {
@@ -15,15 +20,18 @@ export interface VodContext {
   now?: () => number;
 }
 
+/** 抽出結果。emotes は保存せず、capture がエモートキャッシュ用にまとめて送る */
+export type ExtractedMessage = IngestItem & { emotes?: Record<string, string> };
+
 /**
- * ライブチャットの 1 行 → IngestItem。失敗したら null(例外は投げない)。
+ * ライブチャットの 1 行 → メッセージ。失敗したら null(例外は投げない)。
  * DOM 読み取りのみを行い、I/O はしない。
  */
 export function extractLiveMessage(
   line: Element,
   ctx: LiveContext,
   sel: LiveSelectors = SELECTORS.live,
-): IngestItem | null {
+): ExtractedMessage | null {
   try {
     const user = line.getAttribute(sel.userLoginAttr)?.trim().toLowerCase();
     if (!user) return null;
@@ -37,12 +45,18 @@ export function extractLiveMessage(
     if (!text) return null;
 
     const now = ctx.now?.() ?? Date.now();
-    const item: IngestItem = {
+    let ts = now;
+    if (ctx.existing) {
+      const shown = parseClockTime(line.querySelector(sel.timestamp)?.textContent ?? '', now);
+      if (shown === null) return null;
+      ts = shown;
+    }
+    const item: ExtractedMessage = {
       user,
       displayName,
       channel: ctx.channel,
       text,
-      ts: now,
+      ts,
       source: 'live',
       capturedAt: now,
     };
@@ -57,18 +71,21 @@ export function extractLiveMessage(
     const badges = collectBadges(line, sel.badgeImg);
     if (badges.length) item.badges = badges;
 
+    const emotes = collectEmotes(body, sel.emoteImg);
+    if (emotes) item.emotes = emotes;
+
     return item;
   } catch {
     return null;
   }
 }
 
-/** VOD チャットリプレイの 1 行 → IngestItem。失敗したら null */
+/** VOD チャットリプレイの 1 行 → メッセージ。失敗したら null */
 export function extractVodMessage(
   line: Element,
   ctx: VodContext,
   sel: VodSelectors = SELECTORS.vod,
-): IngestItem | null {
+): ExtractedMessage | null {
   try {
     const nameEl = line.querySelector<HTMLElement>(sel.displayName);
     const user =
@@ -84,7 +101,7 @@ export function extractVodMessage(
 
     const offsetSec = parseOffset(line.querySelector(sel.timestamp)?.textContent ?? '');
     const now = ctx.now?.() ?? Date.now();
-    const item: IngestItem = {
+    const item: ExtractedMessage = {
       user,
       displayName,
       channel: ctx.channel,
@@ -102,6 +119,9 @@ export function extractVodMessage(
     const badges = collectBadges(line, sel.badgeImg);
     if (badges.length) item.badges = badges;
 
+    const emotes = collectEmotes(body, sel.emoteImg);
+    if (emotes) item.emotes = emotes;
+
     return item;
   } catch {
     return null;
@@ -114,6 +134,27 @@ export function parseOffset(text: string): number | null {
   if (!m) return null;
   const h = m[1] ? Number(m[1]) : 0;
   return h * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
+/**
+ * ライブチャットの行に表示される時刻("21:34" / "9:05 PM" など)を、now と同じ日付の epoch ms にする。
+ * now より 1 分以上未来になる場合は前日とみなす(日付をまたいだ直後の既存行)。
+ */
+export function parseClockTime(text: string, now: number): number | null {
+  const m = /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?/.exec(text);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  const sec = m[3] ? Number(m[3]) : 0;
+  const ampm = m[4]?.toUpperCase();
+  if (ampm === 'PM' && h < 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+  if (h > 23 || min > 59 || sec > 59) return null;
+  const d = new Date(now);
+  d.setHours(h, min, sec, 0);
+  let ts = d.getTime();
+  if (ts > now + 60_000) ts -= 86_400_000;
+  return ts;
 }
 
 /**
@@ -146,6 +187,18 @@ export function collectText(
     }
   }
   return out.replace(/\s+/g, ' ').trim();
+}
+
+/** 本文中のエモート画像から 名前 → URL を集める。無ければ undefined */
+export function collectEmotes(body: Element, emoteImgSelector: string): Record<string, string> | undefined {
+  let out: Record<string, string> | undefined;
+  for (const img of body.querySelectorAll<HTMLImageElement>(emoteImgSelector)) {
+    const name = img.getAttribute('alt')?.trim();
+    const src = img.getAttribute('src');
+    if (!name || !src || !src.startsWith('https://')) continue;
+    (out ??= {})[name] = src;
+  }
+  return out;
 }
 
 function firstColonSeparator(body: Node): Element | null {

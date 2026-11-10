@@ -202,3 +202,73 @@ describe('純正カードへの追従', () => {
     expect(p.isOpen).toBe(false);
   });
 });
+
+describe('エモート表示・チャンネル名・ドラッグ', () => {
+  it('既知のエモートは画像、未知はテキストのまま', async () => {
+    sendMessage.mockImplementation(async (req: { type: string }) => {
+      if (req.type === 'ws:query') return { items: [msg(0, { text: 'gg :Kappa: and :Nope: :Kappa:' })], hasMore: false };
+      if (req.type === 'ws:emotes') return { Kappa: 'https://static-cdn.jtvnw.net/emoticons/v2/25/default/light/1.0' };
+      return { user: 'alice', displayName: 'Alice', count: 1, firstTs: T0, lastTs: T0 };
+    });
+    document.documentElement.classList.add('tw-root--theme-dark');
+    const { Popover } = await import('../src/content/popover');
+    const p = new Popover();
+    p.open({ user: 'alice', displayName: 'Alice', channel: null, anchor: { x: 0, y: 0 } });
+    await flush();
+    const text = p.element.shadowRoot!.querySelector('.item .text')!;
+    const imgs = [...text.querySelectorAll('img.emote')];
+    expect(imgs.length).toBe(2);
+    expect(imgs[0]!.getAttribute('alt')).toBe('Kappa');
+    // 表示時のテーマ(dark)に合わせる
+    expect(imgs[0]!.getAttribute('src')).toBe('https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0');
+    expect(text.textContent).toBe('gg  and :Nope: ');
+    document.documentElement.classList.remove('tw-root--theme-dark');
+    const names = sendMessage.mock.calls.find((c) => c[0].type === 'ws:emotes')![0].names;
+    expect([...names].sort()).toEqual(['Kappa', 'Nope']);
+  });
+
+  it('「このチャンネル」スコープではチャンネル名を隠すクラスが付く', async () => {
+    const { Popover } = await import('../src/content/popover');
+    const p = new Popover();
+    p.open({ user: 'alice', displayName: 'Alice', channel: 'ch1', anchor: { x: 0, y: 0 } });
+    await flush();
+    const root = p.element.shadowRoot!;
+    const list = root.querySelector('.list')!;
+    const select = root.querySelector<HTMLSelectElement>('.scope')!;
+    // 直前のスコープを引き継ぐので、明示的に切り替えて確認する
+    select.value = 'channel';
+    select.dispatchEvent(new Event('change'));
+    expect(list.classList.contains('single-channel')).toBe(true);
+    select.value = 'all';
+    select.dispatchEvent(new Event('change'));
+    expect(list.classList.contains('single-channel')).toBe(false);
+  });
+
+  it('ヘッダのドラッグで移動し、位置を記憶し、ダブルクリックで戻す', async () => {
+    vi.stubGlobal('innerWidth', 1200);
+    vi.stubGlobal('innerHeight', 800);
+    const { Popover } = await import('../src/content/popover');
+    const p = new Popover();
+    p.open({ user: 'alice', displayName: 'Alice', channel: null, anchor: { x: 100, y: 100 } });
+    await flush();
+    const header = p.element.shadowRoot!.querySelector<HTMLElement>('.header')!;
+    const ev = (type: string, x: number, y: number) =>
+      header.dispatchEvent(Object.assign(new MouseEvent(type, { bubbles: true, clientX: x, clientY: y, button: 0 }), { pointerId: 1 }));
+    ev('pointerdown', 150, 110);
+    ev('pointermove', 350, 210);
+    ev('pointerup', 350, 210);
+    expect(p.element.style.left).toBe('300px');
+    expect(p.element.style.top).toBe('200px');
+    expect(JSON.parse(localStorage.getItem('ws-popover-position')!)).toEqual({ x: 300, y: 200 });
+
+    // 再 open しても記憶した位置に出る
+    p.close();
+    p.open({ user: 'bob', displayName: 'Bob', channel: null, anchor: { x: 10, y: 10 } });
+    await flush();
+    expect(p.element.style.left).toBe('300px');
+
+    header.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(localStorage.getItem('ws-popover-position')).toBeNull();
+    expect(p.element.style.left).toBe('18px'); // アンカー(10) + GAP(8)
+  });
+});

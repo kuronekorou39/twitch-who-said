@@ -142,3 +142,14 @@ describe('queryMessages', () => {
     expect(r.hasMore).toBe(false);
   });
 });
+
+describe('emotes', () => {
+  it('名前 → URL を保存し、既知のものだけ返す', async () => {
+    const { putEmotes, getEmotes } = await import('../src/db/db');
+    const db = await getDb();
+    await putEmotes(db, { Kappa: 'https://e/kappa', PogChamp: 'https://e/pog' });
+    await putEmotes(db, { Kappa: 'https://e/kappa2' }); // 上書き
+    expect(await getEmotes(db, ['Kappa', 'PogChamp', 'Unknown', 'Kappa'])).toEqual({ Kappa: 'https://e/kappa2', PogChamp: 'https://e/pog' });
+    expect(await getEmotes(db, [])).toEqual({});
+  });
+});

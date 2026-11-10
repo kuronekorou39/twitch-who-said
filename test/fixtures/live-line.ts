@@ -93,3 +93,11 @@ export const LIVE_WITH_MSG_ID = `
   <span class="chat-author__display-name" data-a-target="chat-message-username">WithId</span>
   <span data-a-target="chat-line-message-body"><span class="text-fragment">hi</span></span>
 </div>`;
+
+/** タイムスタンプ表示 ON のときの行(先頭に .chat-line__timestamp) */
+export const LIVE_WITH_TIMESTAMP = `
+<div class="chat-line__message" data-a-target="chat-line-message" data-a-user="stamped">
+  <span class="chat-line__timestamp">21:34</span>
+  <span class="chat-author__display-name" data-a-target="chat-message-username">Stamped</span>
+  <span data-a-target="chat-line-message-body"><span class="text-fragment">late</span></span>
+</div>`;

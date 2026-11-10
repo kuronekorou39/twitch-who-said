@@ -78,7 +78,13 @@ try {
   // --- ポップオーバー: 最新行のユーザー名をクリックし、純正カードの隣に出ることを確認 ---
   const shotDir = process.env.SHOT_DIR ?? '.cache';
   const popoverInfo = await (async () => {
-    const names = await page.$$('.chat-line__message[data-a-user] .chat-author__display-name, .vod-message .chat-author__display-name');
+    // エモートを含む行があればそのユーザーを優先(エモート表示の確認のため)
+    const withEmote = await page.$$(
+      '.chat-line__message[data-a-user]:has(img.chat-line__message--emote) .chat-author__display-name, .vod-message:has(.video-chat__message img[alt]) .chat-author__display-name',
+    );
+    const names = withEmote.length
+      ? withEmote
+      : await page.$$('.chat-line__message[data-a-user] .chat-author__display-name, .vod-message .chat-author__display-name');
     if (names.length === 0) return { error: 'no chat lines' };
     const target = names[names.length - 1];
     await target.scrollIntoView();
@@ -103,6 +109,9 @@ try {
         count: root?.querySelector('.count')?.textContent,
         scopeOptions: [...(root?.querySelectorAll('.scope option') ?? [])].map((o) => o.value),
         items: root?.querySelectorAll('.item').length,
+        emoteImgs: root?.querySelectorAll('.item img.emote').length,
+        emoteSrc: root?.querySelector('.item img.emote')?.getAttribute('src'),
+        channelHidden: root?.querySelector('.item .channel') ? getComputedStyle(root.querySelector('.item .channel')).display === 'none' : null,
         firstItem: root?.querySelector('.item')?.textContent?.trim().slice(0, 80),
         status: root?.querySelector('.status')?.textContent,
         footer: root?.querySelector('.footer')?.textContent,
@@ -114,6 +123,31 @@ try {
     const box = hostEl ? await hostEl.boundingBox() : null;
     if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await new Promise((r) => setTimeout(r, 500));
+    // ヘッダをドラッグして移動できること(ヘッダ左端付近をつかむ)
+    let dragged = null;
+    if (box) {
+      await page.mouse.move(box.x + 40, box.y + 14);
+      await page.mouse.down();
+      await page.mouse.move(box.x + 40 + 120, box.y + 14 + 80, { steps: 8 });
+      await page.mouse.up();
+      await new Promise((r) => setTimeout(r, 300));
+      const after = await hostEl.boundingBox();
+      dragged = { from: { x: Math.round(box.x), y: Math.round(box.y) }, to: { x: Math.round(after.x), y: Math.round(after.y) } };
+      await page.screenshot({ path: `${shotDir}/popover-dragged.png` });
+      // 「位置を戻す」ボタン(移動後だけ表示)で元の位置に戻す
+      const btn = await page.evaluate(() => {
+        const b = document.getElementById('ws-popover')?.shadowRoot?.querySelector('.reset');
+        if (!b || b.hidden) return null;
+        const r = b.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      });
+      dragged.resetButtonShown = !!btn;
+      if (btn) await page.mouse.click(btn.x, btn.y);
+      await new Promise((r) => setTimeout(r, 300));
+      const reset = await hostEl.boundingBox();
+      dragged.reset = { x: Math.round(reset.x), y: Math.round(reset.y) };
+      dragged.storedAfterReset = await page.evaluate(() => localStorage.getItem('ws-popover-position'));
+    }
     const isOpen = () =>
       page.evaluate(() => ({
         card: !!document.querySelector('[data-a-target="viewer-card"]'),
@@ -124,7 +158,7 @@ try {
     await page.keyboard.press('Escape');
     await new Promise((r) => setTimeout(r, 500));
     const afterEsc = await isOpen();
-    return { ...info, afterInnerClick, afterEsc };
+    return { ...info, afterInnerClick, dragged, afterEsc };
   })();
   console.log('popover:', JSON.stringify(popoverInfo, null, 1));
 

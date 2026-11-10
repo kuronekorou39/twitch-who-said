@@ -1,5 +1,6 @@
 import { fireAndForget } from '../shared/messages';
 import type { IngestItem } from '../shared/types';
+import type { ExtractedMessage } from './extract';
 
 /** デバウンス時間(ms)。これを超えて新着がなければフラッシュ */
 const FLUSH_DEBOUNCE_MS = 300;
@@ -29,8 +30,8 @@ export interface CaptureStats {
 export interface CaptureOptions {
   /** メッセージ行のセレクタ。追加ノード自身か、その子孫に一致したものを行とみなす */
   lineSelector: string;
-  /** 1 行 → IngestItem。失敗は null */
-  extract: (line: Element) => IngestItem | null;
+  /** 1 行 → メッセージ。existing は監視開始時に既に表示されていた行。失敗は null */
+  extract: (line: Element, existing: boolean) => ExtractedMessage | null;
 }
 
 /**
@@ -40,6 +41,9 @@ export interface CaptureOptions {
 export class ChatCapture {
   private observer: MutationObserver | null = null;
   private queue: IngestItem[] = [];
+  /** 次のフラッシュで送るエモート(このページでまだ送っていないものだけ) */
+  private pendingEmotes: Record<string, string> = {};
+  private readonly sentEmotes = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   readonly stats: CaptureStats = { seen: 0, extracted: 0, flushed: 0 };
 
@@ -49,10 +53,10 @@ export class ChatCapture {
   start(container: Element, { includeExisting = true } = {}): void {
     this.stop();
     this.observer = new MutationObserver((records) => {
-      for (const rec of records) this.handleAdded(rec.addedNodes);
+      for (const rec of records) this.handleAdded(rec.addedNodes, false);
     });
     this.observer.observe(container, { childList: true, subtree: false });
-    if (includeExisting) this.handleAdded(container.children);
+    if (includeExisting) this.handleAdded(container.children, true);
   }
 
   stop(): void {
@@ -61,7 +65,7 @@ export class ChatCapture {
     this.flush();
   }
 
-  private handleAdded(nodes: Iterable<Node>): void {
+  private handleAdded(nodes: Iterable<Node>, existing: boolean): void {
     for (const node of nodes) {
       if (node.nodeType !== Node.ELEMENT_NODE) continue;
       const el = node as Element;
@@ -69,9 +73,17 @@ export class ChatCapture {
       const line = el.matches(this.opts.lineSelector) ? el : el.querySelector(this.opts.lineSelector);
       if (!line) continue;
       this.stats.seen++;
-      const item = this.opts.extract(line);
-      if (!item) continue;
+      const extracted = this.opts.extract(line, existing);
+      if (!extracted) continue;
       this.stats.extracted++;
+      const { emotes, ...item } = extracted;
+      if (emotes) {
+        for (const [name, url] of Object.entries(emotes)) {
+          if (this.sentEmotes.has(name)) continue;
+          this.sentEmotes.add(name);
+          this.pendingEmotes[name] = url;
+        }
+      }
       this.enqueue(item);
     }
   }
@@ -97,6 +109,8 @@ export class ChatCapture {
     const items = this.queue;
     this.queue = [];
     this.stats.flushed += items.length;
-    fireAndForget({ type: 'ws:ingest', items, self: readSelfLogin() });
+    const emotes = Object.keys(this.pendingEmotes).length ? this.pendingEmotes : undefined;
+    this.pendingEmotes = {};
+    fireAndForget({ type: 'ws:ingest', items, self: readSelfLogin(), emotes });
   }
 }

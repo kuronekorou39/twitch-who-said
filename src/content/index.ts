@@ -58,7 +58,7 @@ function setup(page: PageInfo): void {
 function setupLive(channel: string): void {
   const cap = new ChatCapture({
     lineSelector: SELECTORS.live.chatLine,
-    extract: (line) => extractLiveMessage(line, { channel }),
+    extract: (line, existing) => extractLiveMessage(line, { channel, existing }),
   });
   capture = cap;
   const token = setupToken;

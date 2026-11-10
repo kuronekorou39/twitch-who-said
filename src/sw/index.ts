@@ -1,4 +1,16 @@
-import { clearAll, getDb, getMeta, getStats, getUserStats, ingestBatch, META_LAST_PRUNE, queryMessages, setMeta } from '../db/db';
+import {
+  clearAll,
+  getDb,
+  getEmotes,
+  getMeta,
+  getStats,
+  getUserStats,
+  ingestBatch,
+  META_LAST_PRUNE,
+  putEmotes,
+  queryMessages,
+  setMeta,
+} from '../db/db';
 import { prune } from '../db/prune';
 import type { Req, ResMap } from '../shared/messages';
 import { buildExcludeSet, loadSettings, saveSettings } from '../shared/settings';
@@ -36,8 +48,11 @@ async function handle(req: Req): Promise<ResMap[Req['type']]> {
   switch (req.type) {
     case 'ws:ingest': {
       const settings = await loadSettings();
+      if (req.emotes) await putEmotes(db, req.emotes);
       return ingestBatch(db, req.items, buildExcludeSet(settings, req.self));
     }
+    case 'ws:emotes':
+      return getEmotes(db, req.names);
     case 'ws:query':
       return queryMessages(db, req);
     case 'ws:userStats':
