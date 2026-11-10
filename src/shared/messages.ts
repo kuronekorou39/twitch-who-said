@@ -37,7 +37,7 @@ export interface ResMap {
   'ws:getVodStart': { ts: number | null };
   'ws:setVodStart': { ok: true };
   'ws:stats': DbStats;
-  'ws:prune': { deleted: number; byRetention: number; byPerUser: number; byTotal: number };
+  'ws:prune': { deleted: number; byRetention: number; byPerUser: number; byTotal: number; byDuplicate: number };
   'ws:clear': { ok: true };
   'ws:getSettings': Settings;
   'ws:setSettings': Settings;

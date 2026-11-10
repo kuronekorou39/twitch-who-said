@@ -1,5 +1,6 @@
 import type { IDBPTransaction } from 'idb';
-import type { Settings, UserRecord } from '../shared/types';
+import { isNearTs, nearTsRange } from '../shared/id';
+import type { ChatMessage, Settings, UserRecord } from '../shared/types';
 import { META_CHANNELS, META_LAST_PRUNE, type ChannelCounts, type WhoSaidDatabase, type WhoSaidDB } from './db';
 
 /** 1 トランザクションで削除する最大件数。間に yield を挟んで SW のイベントループを占有しない */
@@ -9,6 +10,8 @@ export interface PruneResult {
   byRetention: number;
   byPerUser: number;
   byTotal: number;
+  /** 近傍重複の掃除で消した件数 */
+  byDuplicate: number;
   deleted: number;
 }
 
@@ -23,15 +26,15 @@ const defaultYield = () => new Promise<void>((r) => setTimeout(r, 0));
 
 /**
  * 保持ポリシーを適用する。
- * ① retentionDays 超(capturedAt 基準)を削除 → ② ユーザーあたり上限超を古い順に削除 → ③ 全体上限超を古い順に削除。
- * 各段階の後に users / channels の集計を更新する。
+ * ① retentionDays 超(capturedAt 基準)を削除 → ② ユーザーあたり上限超を古い順に削除 → ③ 全体上限超を古い順に削除
+ * → ④ 取り込み時に弾けなかった近傍重複を掃除。各段階の後に users / channels の集計を更新する。
  */
 export async function prune(db: WhoSaidDatabase, settings: Settings, opts: PruneOptions = {}): Promise<PruneResult> {
   const chunk = opts.chunk ?? DEFAULT_CHUNK;
   const now = opts.now ?? Date.now;
   const yieldFn = opts.yieldFn ?? defaultYield;
 
-  const result: PruneResult = { byRetention: 0, byPerUser: 0, byTotal: 0, deleted: 0 };
+  const result: PruneResult = { byRetention: 0, byPerUser: 0, byTotal: 0, byDuplicate: 0, deleted: 0 };
 
   // ① 保持期間
   if (settings.retentionDays > 0) {
@@ -72,7 +75,10 @@ export async function prune(db: WhoSaidDatabase, settings: Settings, opts: Prune
     }
   }
 
-  result.deleted = result.byRetention + result.byPerUser + result.byTotal;
+  // ④ 近傍重複(複数タブ・再読み込みで二重に取り込まれた分。判定ルールを広げた後の既存データも対象)
+  result.byDuplicate = await deleteNearDuplicates(db, chunk, yieldFn);
+
+  result.deleted = result.byRetention + result.byPerUser + result.byTotal + result.byDuplicate;
   await db.put('meta', { key: META_LAST_PRUNE, value: now() });
   return result;
 }
@@ -112,6 +118,59 @@ async function deleteByIndex(
     await tx.done;
     deleted += n;
     if (n < budget) break; // 走査し尽くした
+    await yieldFn();
+  }
+  return deleted;
+}
+
+/**
+ * by_user_channel_ts を昇順に走査し、同 user/channel で本文が同じ・時刻が近い(isNearTs)ものを 1 件に減らす。
+ * 分単位の概算(approxTs)と精密な時刻が並んでいれば精密なほうを残す。chunk 件ごとにトランザクションを区切る
+ */
+async function deleteNearDuplicates(db: WhoSaidDatabase, chunk: number, yieldFn: () => Promise<void>): Promise<number> {
+  let deleted = 0;
+  let resumeAfter: [string, string, number] | null = null;
+  let group = '';
+  /** 現在の user/channel で、まだ相手になり得る直近の生存レコード */
+  let recent: ChatMessage[] = [];
+  for (;;) {
+    const tx = db.transaction(['messages', 'users', 'meta'], 'readwrite');
+    const messages = tx.objectStore('messages');
+    const affectedUsers = new Set<string>();
+    const channelDelta = new Map<string, number>();
+    const range = resumeAfter ? IDBKeyRange.lowerBound(resumeAfter, true) : null;
+    let cursor = await messages.index('by_user_channel_ts').openCursor(range, 'next');
+    let n = 0;
+    while (cursor && n < chunk) {
+      const v = cursor.value;
+      n++;
+      resumeAfter = cursor.key;
+      const g = `${v.user}\n${v.channel}`;
+      if (g !== group) {
+        group = g;
+        recent = [];
+      }
+      const oldest = nearTsRange(v)[0];
+      recent = recent.filter((r) => r.ts >= oldest);
+      const dup = recent.find((r) => r.text === v.text && isNearTs(r, v));
+      if (!dup) {
+        recent.push(v);
+      } else {
+        let victim = v;
+        if (dup.approxTs && !v.approxTs) {
+          victim = dup;
+          recent[recent.indexOf(dup)] = v;
+        }
+        await messages.delete(victim.id);
+        affectedUsers.add(victim.user);
+        channelDelta.set(victim.channel, (channelDelta.get(victim.channel) ?? 0) + 1);
+        deleted++;
+      }
+      cursor = await cursor.continue();
+    }
+    if (affectedUsers.size > 0) await applyDeletions(tx, affectedUsers, channelDelta);
+    await tx.done;
+    if (!cursor) break; // 走査し尽くした
     await yieldFn();
   }
   return deleted;

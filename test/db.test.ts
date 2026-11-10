@@ -69,6 +69,30 @@ describe('ingestBatch', () => {
     expect((await getStats(db)).messages).toBe(3);
   });
 
+  it('分単位の既存行(approxTs)と、その 1 分内に取り込んだ精密な時刻は同一とみなす', async () => {
+    const db = await getDb();
+    const minute = Math.floor(T0 / 60_000) * 60_000;
+    // 精密 → 概算: スキップ
+    await ingestBatch(db, [item({ ts: minute + 45_000 })], new Set());
+    let res = await ingestBatch(db, [item({ ts: minute, approxTs: true })], new Set());
+    expect(res.accepted).toBe(0);
+    expect((await getStats(db)).messages).toBe(1);
+    // 次の分の概算は別の発言
+    res = await ingestBatch(db, [item({ ts: minute + 60_000, approxTs: true })], new Set());
+    expect(res.accepted).toBe(1);
+  });
+
+  it('概算で保存済みのものに精密な時刻が来たら置き換える(件数は増えない)', async () => {
+    const db = await getDb();
+    const minute = Math.floor(T0 / 60_000) * 60_000;
+    await ingestBatch(db, [item({ ts: minute, approxTs: true })], new Set());
+    const res = await ingestBatch(db, [item({ ts: minute + 45_000 })], new Set());
+    expect(res.accepted).toBe(0);
+    const q = await queryMessages(db, { user: 'alice', limit: 10 });
+    expect(q.items.map((m) => [m.ts, m.approxTs ?? null])).toEqual([[minute + 45_000, null]]);
+    expect((await getUserStats(db, 'alice')).count).toBe(1);
+  });
+
   it('同じバッチ内の重複も 1 件だけ保存する', async () => {
     const db = await getDb();
     const res = await ingestBatch(db, [item(), item({ ts: T0 + 300 })], new Set());

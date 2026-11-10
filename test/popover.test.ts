@@ -183,6 +183,7 @@ describe('純正カードへの追従', () => {
     const layer = document.querySelector('[data-a-target="chat-user-card"]')!;
     const p = new Popover();
     p.open({ user: 'alice', displayName: 'Alice', channel: null, anchor: { x: 10, y: 20 } });
+    expect(p.element.style.visibility).toBe('hidden'); // 位置が決まるまで描画しない
     await flush();
     expect(p.element.style.left).toBe('10px');
 
@@ -196,6 +197,7 @@ describe('純正カードへの追従', () => {
     await flush();
     expect(p.element.style.left).toBe('348px');
     expect(p.element.style.top).toBe('100px');
+    expect(p.element.style.visibility).toBe('');
 
     card.remove();
     await flush();

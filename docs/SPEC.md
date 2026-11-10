@@ -8,7 +8,7 @@
 |---|---|---|
 | メッセージ ID | `data-a-msg-id` があれば採用 | 現行 Twitch は DOM に ID を出していないため常に内容ハッシュ。属性が復活したときのコードは残してある |
 | 本文抽出 | フラグメントのクラスを列挙して連結 | 本文要素をツリー走査し、テキストノードと `img[alt]` を文書順に連結(未知のフラグメント種別に強い) |
-| 近傍重複ウィンドウ | ±2 秒 | ±10 秒(VOD の日時は「uploadDate + 再生位置」の推定値でライブ取り込み時刻と数秒ずれる) |
+| 近傍重複ウィンドウ | ±2 秒 | ±10 秒(VOD の日時は「uploadDate + 再生位置」の推定値でライブ取り込み時刻と数秒ずれる)。既存行の時刻は分単位なので、その 1 分間を同一視する(`approxTs`)。取り込み時に弾けなかった分は prune の ④ で掃除 |
 | VOD 開始日時 | ページ内 ld+json → UI の日付表示 | 実行時 DOM に ld+json が無いため、同じ URL の SSR HTML を同一オリジンで fetch して `uploadDate` を読む。UI の日付表示は相対表記のみで使えない |
 | VOD のチャンネル | チャット内リンク or ld+json author | 動画情報欄 `.metadata-layout__support` のチャンネルリンク href。フォールバックは ld+json の name 末尾 |
 | Export / Import | SW の RPC(`ws:export` / `ws:import`) | 設定画面から直接 IndexedDB(拡張オリジンで共有)を読み書き。巨大データを `sendMessage` で往復させない。RPC は設けていない |

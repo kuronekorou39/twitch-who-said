@@ -15,6 +15,35 @@ const HASH_ID_LENGTH = 20;
  */
 export const NEAR_DUP_WINDOW_MS = 10_000;
 
+/** approxTs の ts が指す幅(時刻表示は分単位) */
+export const APPROX_TS_SPAN_MS = 60_000;
+
+export interface TsLike {
+  ts: number;
+  approxTs?: true;
+}
+
+/**
+ * 2 件の時刻が「同じ発言の二重取り込み」とみなせる関係か。
+ * 精密な ts 同士は ±NEAR_DUP_WINDOW_MS。分単位の概算(approxTs)は、その 1 分間に相手の ts が
+ * 入っていれば同一(両端にウィンドウ分の余裕を持たせる)。複数タブで同じ配信を開いたときや、
+ * 再読み込みで既存行(分単位)と新着行(ミリ秒)が別々に取り込まれたときの重複を吸収する
+ */
+export function isNearTs(a: TsLike, b: TsLike): boolean {
+  if (a.approxTs && !b.approxTs) {
+    return b.ts >= a.ts - NEAR_DUP_WINDOW_MS && b.ts < a.ts + APPROX_TS_SPAN_MS + NEAR_DUP_WINDOW_MS;
+  }
+  if (b.approxTs && !a.approxTs) return isNearTs(b, a);
+  return Math.abs(a.ts - b.ts) <= NEAR_DUP_WINDOW_MS;
+}
+
+/** isNearTs の相手になり得る ts の範囲 [min, max](インデックス検索用) */
+export function nearTsRange(m: TsLike): [number, number] {
+  return m.approxTs
+    ? [m.ts - NEAR_DUP_WINDOW_MS, m.ts + APPROX_TS_SPAN_MS + NEAR_DUP_WINDOW_MS]
+    : [m.ts - APPROX_TS_SPAN_MS - NEAR_DUP_WINDOW_MS, m.ts + NEAR_DUP_WINDOW_MS];
+}
+
 export function hashIdInput(channel: string, user: string, text: string, ts: number): string {
   return `${channel}\n${user}\n${text}\n${Math.round(ts / 1000)}`;
 }

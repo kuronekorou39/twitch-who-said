@@ -61,6 +61,8 @@ export function extractLiveMessage(
       capturedAt: now,
     };
 
+    if (ctx.existing) item.approxTs = true; // 時刻表示は分単位
+
     const msgId =
       line.getAttribute(sel.msgIdAttr) ?? line.querySelector(`[${sel.msgIdAttr}]`)?.getAttribute(sel.msgIdAttr);
     if (msgId) item.id = msgId;

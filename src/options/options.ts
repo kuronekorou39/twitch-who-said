@@ -117,7 +117,7 @@ async function doPrune(): Promise<void> {
   const r = await rpc({ type: 'ws:prune' });
   setStatus(
     'prune-status',
-    `${fmtNum(r.deleted)} 件を削除しました(期間 ${fmtNum(r.byRetention)} / ユーザー上限 ${fmtNum(r.byPerUser)} / 全体上限 ${fmtNum(r.byTotal)})`,
+    `${fmtNum(r.deleted)} 件を削除しました(期間 ${fmtNum(r.byRetention)} / ユーザー上限 ${fmtNum(r.byPerUser)} / 全体上限 ${fmtNum(r.byTotal)} / 重複 ${fmtNum(r.byDuplicate)})`,
     10_000,
   );
   await refreshStats();

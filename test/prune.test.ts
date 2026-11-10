@@ -36,7 +36,7 @@ describe('prune', () => {
       new Set(),
     );
     const r = await prune(db, { ...noLimits, retentionDays: 365 }, opts);
-    expect(r).toEqual({ byRetention: 2, byPerUser: 0, byTotal: 0, deleted: 2 });
+    expect(r).toEqual({ byRetention: 2, byPerUser: 0, byTotal: 0, byDuplicate: 0, deleted: 2 });
     const st = await getStats(db);
     expect(st.messages).toBe(2);
     expect(st.users).toBe(1); // b は 0 件になり削除
@@ -82,9 +82,32 @@ describe('prune', () => {
       new Set(),
     );
     const r = await prune(db, { ...noLimits, retentionDays: 1, maxPerUser: 4, maxTotal: 5 }, opts);
-    expect(r).toEqual({ byRetention: 1, byPerUser: 2, byTotal: 2, deleted: 5 });
+    expect(r).toEqual({ byRetention: 1, byPerUser: 2, byTotal: 2, byDuplicate: 0, deleted: 5 });
     const st = await getStats(db);
     expect(st.messages).toBe(5);
+  });
+
+  it('近傍重複を掃除し、概算より精密な時刻を残す(チャンクをまたいでも)', async () => {
+    const db = await getDb();
+    const minute = Math.floor(NOW / 60_000) * 60_000 - 10 * 60_000;
+    const base = { displayName: 'a', channel: 'ch', source: 'live' as const, capturedAt: NOW };
+    // 取り込みの重複判定を通さず直接書く(古いルールで保存された重複を模す)
+    const rows = [
+      { id: 'p1', user: 'a', text: 'hi', ts: minute + 20_000, ...base }, // 精密
+      { id: 'x1', user: 'a', text: 'hi', ts: minute, approxTs: true as const, ...base }, // 同じ発言の概算 → 消える
+      { id: 'p2', user: 'a', text: 'hi', ts: minute + 21_000, ...base }, // 精密同士 ±10 秒 → 消える
+      { id: 'p3', user: 'a', text: 'yo', ts: minute + 21_000, ...base }, // 本文が違う → 残る
+      { id: 'p4', user: 'a', text: 'hi', ts: minute + 120_000, ...base }, // 2 分後 → 残る
+      { id: 'b1', user: 'b', text: 'hi', ts: minute + 20_000, ...base }, // 別ユーザー → 残る
+    ];
+    for (const r of rows) await db.put('messages', r);
+    const r = await prune(db, noLimits, { ...opts, chunk: 2 });
+    expect(r.byDuplicate).toBe(2);
+    expect(r.deleted).toBe(2);
+    const ids = (await db.getAll('messages')).map((m) => m.id).sort();
+    expect(ids).toEqual(['b1', 'p1', 'p3', 'p4']);
+    expect((await getUserStats(db, 'a')).count).toBe(3);
+    expect((await getStats(db)).messages).toBe(4);
   });
 
   it('0 は無効(何も消さない)', async () => {

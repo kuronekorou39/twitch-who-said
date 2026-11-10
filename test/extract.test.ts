@@ -91,6 +91,7 @@ describe('既存行(監視開始時に表示済み)の時刻', () => {
     const item = extractLiveMessage(lineOf(LIVE_WITH_TIMESTAMP), { channel: 'c', now: () => now, existing: true });
     expect(item?.ts).toBe(new Date(2026, 10, 10, 21, 34).getTime());
     expect(item?.capturedAt).toBe(now);
+    expect(item?.approxTs).toBe(true); // 分単位
   });
   it('新着行(existing でない)はタイムスタンプがあっても取り込み時刻', () => {
     const item = extractLiveMessage(lineOf(LIVE_WITH_TIMESTAMP), { channel: 'c', now: () => now });

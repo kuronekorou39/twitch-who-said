@@ -12,6 +12,8 @@ export interface ChatMessage {
   text: string;
   /** 発言日時 epoch ms。VOD は推定値 */
   ts: number;
+  /** ts が分単位の概算(既存行の時刻表示から取ったとき)。近傍重複判定ではその 1 分間を同一視する */
+  approxTs?: true;
   source: 'live' | 'vod';
   vodId?: string;
   offsetSec?: number;

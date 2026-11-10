@@ -192,6 +192,8 @@ export class Popover {
     this.applyScopeClass();
 
     this.host.hidden = false;
+    // 位置が決まるまで描画しない。先に出すとアンカー位置に一瞬現れてから純正カードの隣へ飛ぶ
+    this.host.style.visibility = 'hidden';
     this.host.style.left = `${target.anchor.x}px`;
     this.host.style.top = `${target.anchor.y}px`;
     this.trackNativeCard();
@@ -444,6 +446,7 @@ export class Popover {
   }
 
   private applyPosition(p: Point): void {
+    this.host.style.visibility = '';
     this.host.style.left = `${Math.round(p.x)}px`;
     this.host.style.top = `${Math.round(p.y)}px`;
   }

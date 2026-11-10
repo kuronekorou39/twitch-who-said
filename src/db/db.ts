@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPObjectStore } from 'idb';
-import { messageHashId, NEAR_DUP_WINDOW_MS } from '../shared/id';
+import { isNearTs, messageHashId, nearTsRange } from '../shared/id';
 import type { ChatMessage, DbStats, IngestItem, UserRecord, UserStats } from '../shared/types';
 
 export const DB_NAME = 'twitch-who-said';
@@ -87,7 +87,8 @@ export interface IngestResult {
  * 1 バッチを 1 トランザクションで書き込む。
  * - 除外ユーザーは捨てる
  * - id 未設定なら内容ハッシュで補完
- * - 近傍重複(同 user/channel/text が ±NEAR_DUP_WINDOW_MS 以内)はスキップ
+ * - 近傍重複(同 user/channel/text で時刻が近い: shared/id.ts の isNearTs)はスキップ。
+ *   ただし既存が分単位の概算で新着が精密な時刻なら、精密なほうに置き換える
  * - users / meta の集計を更新
  */
 export async function ingestBatch(
@@ -115,7 +116,14 @@ export async function ingestBatch(
   let accepted = 0;
 
   for (const msg of prepared) {
-    if (await isNearDuplicate(messages, msg)) continue;
+    const dup = await findNearDuplicate(messages, msg);
+    if (dup) {
+      if (!dup.approxTs || msg.approxTs) continue;
+      // 概算 → 精密への置き換え。件数は変わらないので集計はそのまま
+      await messages.delete(dup.id);
+      await messages.put(msg);
+      continue;
+    }
     const existed = (await messages.getKey(msg.id)) !== undefined;
     await messages.put(msg);
     if (existed) continue; // 同一 id の上書きは集計に影響させない
@@ -164,17 +172,16 @@ type MessagesStore = Pick<
   'index'
 >;
 
-async function isNearDuplicate(messages: MessagesStore, msg: ChatMessage): Promise<boolean> {
-  const range = IDBKeyRange.bound(
-    [msg.user, msg.channel, msg.ts - NEAR_DUP_WINDOW_MS],
-    [msg.user, msg.channel, msg.ts + NEAR_DUP_WINDOW_MS],
-  );
+async function findNearDuplicate(messages: MessagesStore, msg: ChatMessage): Promise<ChatMessage | null> {
+  const [lo, hi] = nearTsRange(msg);
+  const range = IDBKeyRange.bound([msg.user, msg.channel, lo], [msg.user, msg.channel, hi]);
   let cursor = await messages.index('by_user_channel_ts').openCursor(range);
   while (cursor) {
-    if (cursor.value.id !== msg.id && cursor.value.text === msg.text) return true;
+    const v = cursor.value;
+    if (v.id !== msg.id && v.text === msg.text && isNearTs(v, msg)) return v;
     cursor = await cursor.continue();
   }
-  return false;
+  return null;
 }
 
 export interface QueryParams {

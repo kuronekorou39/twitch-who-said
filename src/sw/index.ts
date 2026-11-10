@@ -29,7 +29,7 @@ function runPrune(): Promise<ResMap['ws:prune']> {
     try {
       const [db, settings] = await Promise.all([getDb(), loadSettings()]);
       const r = await prune(db, settings);
-      return { deleted: r.deleted, byRetention: r.byRetention, byPerUser: r.byPerUser, byTotal: r.byTotal };
+      return { deleted: r.deleted, byRetention: r.byRetention, byPerUser: r.byPerUser, byTotal: r.byTotal, byDuplicate: r.byDuplicate };
     } finally {
       pruneRunning = null;
     }
