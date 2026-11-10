@@ -1,5 +1,26 @@
 # twitch-who-said — Twitch チャット履歴ポップオーバー拡張 仕様書
 
+## 実装との差分(2026-11-10 時点)
+
+本書は当初仕様。実装時に実 DOM を確認して以下を変更した。詳細は README の「実装メモ」も参照。
+
+| 項目 | 仕様 | 実装 |
+|---|---|---|
+| メッセージ ID | `data-a-msg-id` があれば採用 | 現行 Twitch は DOM に ID を出していないため常に内容ハッシュ。属性が復活したときのコードは残してある |
+| 本文抽出 | フラグメントのクラスを列挙して連結 | 本文要素をツリー走査し、テキストノードと `img[alt]` を文書順に連結(未知のフラグメント種別に強い) |
+| 近傍重複ウィンドウ | ±2 秒 | ±10 秒(VOD の日時は「uploadDate + 再生位置」の推定値でライブ取り込み時刻と数秒ずれる) |
+| VOD 開始日時 | ページ内 ld+json → UI の日付表示 | 実行時 DOM に ld+json が無いため、同じ URL の SSR HTML を同一オリジンで fetch して `uploadDate` を読む。UI の日付表示は相対表記のみで使えない |
+| VOD のチャンネル | チャット内リンク or ld+json author | 動画情報欄 `.metadata-layout__support` のチャンネルリンク href。フォールバックは ld+json の name 末尾 |
+| Export / Import | SW の RPC(`ws:export` / `ws:import`) | 設定画面から直接 IndexedDB(拡張オリジンで共有)を読み書き。巨大データを `sendMessage` で往復させない。RPC は設けていない |
+| 自分の除外 | 設定のみ | content script が `login` cookie を読み、取り込みバッチに `self` を添えて SW 側で除外 |
+| SPA 遷移 | `history.pushState` を監視 | isolated world からはフックできないため Navigation API(`navigatesuccess`)+ popstate + 1 秒ポーリング。遷移直後は旧コンテナが残るため、別のコンテナ要素が現れるまで待つ。さらに 3 秒ごとにコンテナの生存を確認し、再マウントされていれば張り直す |
+| 取り込み開始時の既存行 | 流れたメッセージのみ | 新しく現れたコンテナに既に表示されている行も 1 度取り込む(重複は SW が弾く) |
+| セレクタ破損の自己診断 | 30 秒で 0 件なら警告 | 「行らしき要素があるのに 1 件も抽出できない」ときだけ警告(静かなチャットでは出さない)。結果を `chrome.storage.local` に保存し、設定画面にバッジ表示 |
+| manifest | `manifest.json` | CRXJS の `manifest.config.ts`(version は package.json から) |
+| ディレクトリ | `src/sw/db.ts` | DB 層は `src/db/`(SW と設定画面の両方から使う) |
+
+---
+
 ## 0. 概要
 
 Twitch のチャット欄でユーザー名をクリックすると、そのユーザーの過去コメント一覧をポップオーバーで表示するブラウザ拡張（Chrome / Manifest V3）。

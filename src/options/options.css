@@ -19,6 +19,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -47,6 +48,7 @@ button.danger { background: transparent; color: var(--danger); border-color: var
 .actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; margin: 8px 0 0; }
 .badge--warn { background: var(--warn); color: #0e0e10; }
+.badge--info { background: var(--border); color: var(--fg); }
 button.secondary, .button.secondary {
   background: transparent; color: var(--fg); border-color: var(--border);
 }

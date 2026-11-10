@@ -16,7 +16,7 @@ Twitch のチャット欄でユーザー名をクリックすると、そのユ�
 | M2 表示(ユーザー名クリック → ポップオーバー / スコープ切替 / 絞り込み / ページング) | 完了 |
 | M3 VOD リプレイ取り込み(開始日時解決 / 近傍重複抑止 / VOD リンク) | 完了 |
 | M4 運用(prune / 除外 / 自分の除外 / Export, Import) | 完了 |
-| M5 仕上げ | 未着手 |
+| M5 仕上げ(SPA 遷移の堅牢化 / 自己診断バッジ / ドキュメント) | 完了 |
 
 ## インストール(開発ビルド)
 
@@ -48,6 +48,7 @@ node scripts/smoke.mjs <channel> [seconds]   # 例: node scripts/smoke.mjs somec
 POPOUT=0 node scripts/smoke.mjs <channel>   # ポップアウトではなく通常のチャンネルページで確認
 THEME=dark node scripts/smoke.mjs <channel>  # Twitch のテーマを固定(dark | light)
 VOD=<videoId> node scripts/smoke.mjs         # VOD ページ(10 分地点)でチャットリプレイの取り込みを確認
+SPA=1 POPOUT=0 SPA_TO=<channel> node scripts/smoke.mjs <channel>  # ページ内遷移後の追従と取り違えの有無を確認
 SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリーンショット保存先(既定 .cache/)
 ```
 
@@ -58,7 +59,7 @@ SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリ
 ├── vite.config.ts
 ├── src/
 │   ├── content/           # Twitch ページ上で動く content script
-│   │   ├── index.ts       #   エントリ。ページ種別判定・SPA 遷移監視・自己診断
+│   │   ├── index.ts       #   エントリ。ページ種別判定・SPA 遷移監視・コンテナ再マウント検知・自己診断
 │   │   ├── selectors.ts   #   Twitch DOM セレクタ(DOM 依存はここだけ)
 │   │   ├── page.ts        #   URL → ページ種別 / チャンネル判定
 │   │   ├── extract.ts     #   1 行 → メッセージ変換(純粋関数)
@@ -71,7 +72,7 @@ SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリ
 │   │   ├── prune.ts       #   保持ポリシー適用(5,000 件チャンク + yield)
 │   │   └── export.ts      #   JSON Lines のエクスポート / インポート
 │   ├── options/           # 設定画面
-│   └── shared/            # 型・RPC 定義・設定・ID 生成
+│   └── shared/            # 型・RPC 定義・設定・ID 生成・自己診断の保存
 ├── test/                  # Vitest(fixtures/ に実 DOM のスナップショット)
 ├── scripts/               # アイコン生成・スモークテスト
 └── docs/SPEC.md           # 仕様書
@@ -84,7 +85,8 @@ SHOT_DIR=<dir> node scripts/smoke.mjs ...    # ポップオーバーのスクリ
 - 自分の発言の除外は、Twitch がログイン時に設定する `login` cookie を content script が読み、取り込みバッチに添えて Service Worker 側で除外します(`cookies` 権限は不要)
 - VOD の配信開始日時は、実行時の DOM には無い ld+json を SSR の HTML(同じ URL を同一オリジンで fetch)から読みます。取得できたら Service Worker 側にキャッシュします。チャンネルは動画情報欄のチャンネルリンクから判定します
 - エモートは `img[alt]` から `:EmoteName:` 形式のプレーンテキストに正規化して保存します
-- content script の isolated world からは `history.pushState` をフックできないため、SPA 遷移は URL のポーリング(1 秒)で検知します
+- content script の isolated world からは `history.pushState` をフックできないため、SPA 遷移は Navigation API(`navigatesuccess`)と popstate、1 秒ごとの URL ポーリングで検知します。遷移直後は旧チャンネルの行が残った旧コンテナがまだ DOM にあるので、別のコンテナ要素が現れるまで待ってから監視を始めます。加えて 3 秒ごとにコンテナが DOM から外れていないかを確認し、Twitch がチャット欄を再マウントしていれば張り直します
+- セレクタ破損の自己診断: 監視開始から 30 秒後に「行らしき要素があるのに 1 件も抽出できていない」場合だけ console.warn を 1 回出し、設定画面の統計欄にバッジを表示します
 - ポップオーバーは Twitch 純正のビューワーカード(`[data-a-target="viewer-card"]`)を止めずに、その右隣(画面右端に寄る場合は左隣)へ同じ上端で表示します。カードのドラッグには MutationObserver で追従し、カードが DOM から消えたら一緒に閉じます
 
 ## プライバシー

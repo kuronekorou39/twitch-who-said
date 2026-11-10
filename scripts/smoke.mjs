@@ -48,6 +48,33 @@ try {
   console.log(`watching chat for ${waitSec}s ...`);
   await new Promise((r) => setTimeout(r, waitSec * 1000));
 
+  // --- SPA=1: サイドバーの別チャンネルへページ内遷移し、取り込みが追従することを確認 ---
+  if (process.env.SPA === '1' && !popout && !vodId) {
+    // サイドバーのリンクはログイン状態で変わるため、pushState + popstate で Twitch のルーターに遷移させる
+    const to = process.env.SPA_TO ?? 'sample_streamer';
+    const href = `/${to}`;
+    {
+      await page.evaluate((path) => {
+        history.pushState({}, '', path);
+        dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+      }, href);
+      console.log(`SPA navigate → ${href}, watching 35s ...`);
+      await new Promise((r) => setTimeout(r, 35_000));
+      console.log('url now', page.url());
+      console.log(
+        'dom after SPA:',
+        await page.evaluate(() => ({
+          containers: document.querySelectorAll('.chat-scrollable-area__message-container').length,
+          rows: document.querySelector('.chat-scrollable-area__message-container')?.childElementCount,
+          lines: document.querySelectorAll('.chat-line__message[data-a-user]').length,
+          firstRowClasses: document.querySelector('.chat-scrollable-area__message-container > *')?.className?.slice(0, 80),
+          firstLineUser: document.querySelector('.chat-line__message')?.getAttribute('data-a-user'),
+          bodyFound: !!document.querySelector('[data-a-target="chat-line-message-body"]'),
+        })),
+      );
+    }
+  }
+
   // --- ポップオーバー: 最新行のユーザー名をクリックし、純正カードの隣に出ることを確認 ---
   const shotDir = process.env.SHOT_DIR ?? '.cache';
   const popoverInfo = await (async () => {
@@ -117,6 +144,7 @@ try {
     };
   });
   console.log('options stats:', stats);
+  console.log('diag:', await opts.evaluate(() => chrome.storage.local.get('diag').then((r) => r.diag ?? null)));
   await opts.screenshot({ path: `${shotDir}/options.png`, fullPage: true });
 
   // SW 経由で直接クエリしてサンプルを表示
@@ -125,6 +153,13 @@ try {
     const db = await new Promise((res, rej) => { const r = indexedDB.open('twitch-who-said'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
     const users = await new Promise((res) => { const r = db.transaction('users').objectStore('users').index('by_count').openCursor(null, 'prev'); const out = []; r.onsuccess = () => { const c = r.result; if (c && out.length < 3) { out.push(c.value); c.continue(); } else res(out); }; });
     const q = await chrome.runtime.sendMessage({ type: 'ws:query', user: users[0]?.user ?? '', limit: 5 });
+    // 同じ user/text が複数チャンネルに保存されていないか(SPA 遷移時の取り違え検知)
+    const all = await new Promise((res) => { const r = db.transaction('messages').objectStore('messages').getAll(); r.onsuccess = () => res(r.result); });
+    const byKey = new Map();
+    for (const m of all) { const k = m.user + '\n' + m.text; (byKey.get(k) ?? byKey.set(k, new Set()).get(k)).add(m.channel); }
+    const crossChannelDups = [...byKey.entries()].filter(([, chs]) => chs.size > 1).map(([k, chs]) => k.replace('\n', ': ') + ' → ' + [...chs].join(','));
+    const perChannel = {}; for (const m of all) perChannel[m.channel] = (perChannel[m.channel] ?? 0) + 1;
+    st.perChannel = perChannel; st.crossChannelDups = crossChannelDups;
     const fmt = (m) => `[${m.channel}] ${m.source}${m.vodId ? ' vod=' + m.vodId + ' @' + m.offsetSec + 's' : ''} ${new Date(m.ts).toISOString()} ${m.displayName}: ${m.text}${m.badges ? ' badges=' + m.badges.join('|') : ''} color=${m.color}`;
     return { st, topUsers: users.map((u) => `${u.user}(${u.displayName}) x${u.count}`), sample: q.items.map(fmt) };
   });

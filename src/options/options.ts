@@ -1,5 +1,6 @@
 import { getDb } from '../db/db';
 import { exportFileName, exportLines, importLines } from '../db/export';
+import { loadDiag } from '../shared/diag';
 import { rpc } from '../shared/messages';
 import type { Settings } from '../shared/types';
 
@@ -35,6 +36,12 @@ async function refreshStats(): Promise<void> {
   $('st-last-ingest').textContent = fmtDate(st.lastIngestAt);
   $('st-last-prune').textContent = fmtDate(st.lastPruneAt);
   $('ws-no-data').hidden = st.messages > 0;
+  const diag = await loadDiag();
+  const diagEl = $('ws-diag');
+  diagEl.hidden = !diag || diag.ok;
+  if (diag && !diag.ok) {
+    diagEl.textContent = `取得できていません: ${diag.page} で行は見えているのに 1 件も抽出できませんでした(${fmtDate(diag.at)})。Twitch の DOM が変わった可能性があります`;
+  }
   try {
     const est = await navigator.storage.estimate();
     $('st-usage').textContent = est.usage !== undefined ? fmtBytes(est.usage) : '不明';
