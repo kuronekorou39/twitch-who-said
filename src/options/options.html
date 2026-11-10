@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Who Said — 設定</title>
+    <link rel="stylesheet" href="./options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Who Said — Twitch Chat History</h1>
+      <p class="muted">チャット履歴はこの端末のブラウザ内(IndexedDB)にのみ保存されます。外部送信はありません。</p>
+
+      <section>
+        <h2>統計</h2>
+        <div id="ws-no-data" class="badge badge--warn" hidden>まだメッセージを取得できていません</div>
+        <dl class="stats">
+          <dt>メッセージ数</dt><dd id="st-messages">–</dd>
+          <dt>ユーザー数</dt><dd id="st-users">–</dd>
+          <dt>チャンネル数</dt><dd id="st-channels">–</dd>
+          <dt>最古</dt><dd id="st-oldest">–</dd>
+          <dt>最新</dt><dd id="st-newest">–</dd>
+          <dt>最終取り込み</dt><dd id="st-last-ingest">–</dd>
+          <dt>推定使用容量</dt><dd id="st-usage">–</dd>
+        </dl>
+        <button id="btn-refresh" type="button">更新</button>
+      </section>
+
+      <section>
+        <h2>保持ポリシー</h2>
+        <form id="form-settings">
+          <label>保持日数(0 = 無期限)<input name="retentionDays" type="number" min="0" step="1" /></label>
+          <label>ユーザーあたり上限件数(0 = 無制限)<input name="maxPerUser" type="number" min="0" step="1" /></label>
+          <label>全体上限件数(0 = 無制限)<input name="maxTotal" type="number" min="0" step="1" /></label>
+
+          <h2>除外</h2>
+          <label>除外ユーザー(login 名、改行またはカンマ区切り)<textarea name="excludeUsers" rows="4"></textarea></label>
+          <label class="check"><input name="knownBotsPreset" type="checkbox" /> 既知ボット(nightbot, streamelements, fossabot, moobot, streamlabs 等)を除外</label>
+          <label class="check"><input name="excludeSelf" type="checkbox" /> 自分の発言を除外</label>
+          <label class="check"><input name="showOnModView" type="checkbox" /> Mod View でもポップオーバーを表示</label>
+
+          <div class="actions">
+            <button type="submit">保存</button>
+            <span id="save-status" class="muted"></span>
+          </div>
+        </form>
+      </section>
+
+      <section>
+        <h2>データ</h2>
+        <div class="actions">
+          <button id="btn-clear" type="button" class="danger">すべて削除</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./options.ts"></script>
+  </body>
+</html>
