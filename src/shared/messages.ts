@@ -46,14 +46,34 @@ export interface ResMap {
 export type ReqOf<T extends Req['type']> = Extract<Req, { type: T }>;
 export type ResOf<T extends Req['type']> = ResMap[T];
 
-/** 応答を待つ RPC(popover / options 用) */
+/**
+ * 拡張のコンテキストが生きているか。拡張を再読み込み・更新すると、開いたままのタブの
+ * content script は孤児になり、chrome.runtime.* が同期的に "Extension context invalidated" を投げる
+ */
+export function isContextAlive(): boolean {
+  try {
+    return typeof chrome !== 'undefined' && !!chrome.runtime?.id;
+  } catch {
+    return false;
+  }
+}
+
+/** 応答を待つ RPC(popover / options 用)。同期例外も reject に変換する */
 export function rpc<T extends Req['type']>(req: ReqOf<T>): Promise<ResOf<T>> {
-  return chrome.runtime.sendMessage(req) as Promise<ResOf<T>>;
+  try {
+    return chrome.runtime.sendMessage(req) as Promise<ResOf<T>>;
+  } catch (e) {
+    return Promise.reject(e instanceof Error ? e : new Error(String(e)));
+  }
 }
 
 /** 応答を待たない送信(capture 用)。SW が停止していても sendMessage が起こす */
 export function fireAndForget(req: Req): void {
-  void chrome.runtime.sendMessage(req).catch(() => {
-    /* SW 未起動・ポート切断などは無視。再送は呼び出し側のキューに任せる */
-  });
+  try {
+    void chrome.runtime.sendMessage(req).catch(() => {
+      /* SW 未起動・ポート切断などは無視。再送は呼び出し側のキューに任せる */
+    });
+  } catch {
+    /* コンテキスト無効(拡張の再読み込み後)。このタブの content script はもう動けない */
+  }
 }

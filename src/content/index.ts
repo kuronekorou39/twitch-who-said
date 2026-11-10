@@ -1,5 +1,5 @@
 import { saveDiag } from '../shared/diag';
-import { rpc } from '../shared/messages';
+import { isContextAlive, rpc } from '../shared/messages';
 import { DEFAULT_SETTINGS } from '../shared/settings';
 import type { Settings } from '../shared/types';
 import { ChatCapture } from './capture';
@@ -149,6 +149,7 @@ function waitForContainer(selector: string, token: number): Promise<FoundContain
  * Mod View 切替など)と MutationObserver は黙って止まる。コンテナが DOM から外れていたら張り直す
  */
 function watchdog(): void {
+  if (!ensureAlive()) return;
   if (!capture || !container || !containerSelector) return;
   if (container.isConnected) return;
   const cap = capture;
@@ -172,8 +173,29 @@ function warnNoMessages(): void {
 }
 
 function checkUrl(): void {
+  if (!ensureAlive()) return;
   const next = detectPage(location.href);
   if (!samePage(current, next)) setup(next);
+}
+
+let timers: ReturnType<typeof setInterval>[] = [];
+let shutDown = false;
+
+/**
+ * 拡張が再読み込み・更新されると、このタブの content script は SW と通信できなくなる。
+ * 例外を出し続けないよう、検知したら監視とタイマーを止めて静かに終了する(タブの再読み込みで復帰)
+ */
+function ensureAlive(): boolean {
+  if (shutDown) return false;
+  if (isContextAlive()) return true;
+  shutDown = true;
+  for (const t of timers) clearInterval(t);
+  timers = [];
+  setupToken++;
+  capture?.stop();
+  capture = null;
+  popover?.close();
+  return false;
 }
 
 function popoverContext() {
@@ -187,9 +209,13 @@ function popoverContext() {
 function main(): void {
   setup(detectPage(location.href));
   popover = installPopover(popoverContext);
-  void rpc({ type: 'ws:getSettings' }).then((s) => {
-    if (s) settings = s;
-  });
+  rpc({ type: 'ws:getSettings' })
+    .then((s) => {
+      if (s) settings = s;
+    })
+    .catch(() => {
+      /* SW が応答しなければ既定値のまま */
+    });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes.settings?.newValue) {
       settings = { ...DEFAULT_SETTINGS, ...(changes.settings.newValue as Partial<Settings>) };
@@ -200,8 +226,7 @@ function main(): void {
   const nav = (window as unknown as { navigation?: EventTarget }).navigation;
   nav?.addEventListener('navigatesuccess', checkUrl);
   window.addEventListener('popstate', checkUrl);
-  setInterval(checkUrl, URL_POLL_MS);
-  setInterval(watchdog, CONTAINER_WATCHDOG_MS);
+  timers.push(setInterval(checkUrl, URL_POLL_MS), setInterval(watchdog, CONTAINER_WATCHDOG_MS));
   window.addEventListener('pagehide', () => capture?.flush());
 }
 

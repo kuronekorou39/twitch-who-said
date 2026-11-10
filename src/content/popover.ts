@@ -1,4 +1,4 @@
-import { rpc } from '../shared/messages';
+import { isContextAlive, rpc } from '../shared/messages';
 import type { ChatMessage } from '../shared/types';
 import { adjustNameColor, formatDate, formatOffsetDisplay, formatTime, vodUrl } from './format';
 import css from './popover.css?inline';
@@ -554,6 +554,7 @@ export function installPopover(getContext: () => PopoverContext): Popover {
   document.addEventListener(
     'click',
     (e) => {
+      if (!isContextAlive()) return; // 拡張の再読み込み後の孤児 content script では何もしない
       const ctx = getContext();
       if (!ctx.enabled) return;
       const path = e.composedPath();
