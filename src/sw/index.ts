@@ -1,5 +1,6 @@
 import {
   clearAll,
+  countMessages,
   getDb,
   getEmotes,
   getMeta,
@@ -7,15 +8,18 @@ import {
   getUserStats,
   ingestBatch,
   META_LAST_PRUNE,
+  META_VOD_START_PREFIX,
   putEmotes,
+  queryChanges,
   queryMessages,
   setMeta,
 } from '../db/db';
-import { prune } from '../db/prune';
+import { deleteUsers, prune } from '../db/prune';
 import type { Req, ResMap } from '../shared/messages';
 import { buildExcludeSet, loadSettings, saveSettings } from '../shared/settings';
+import { viewerUrl } from '../shared/viewer-url';
+import { isAllowedSender, sanitizeReq } from './guard';
 
-const VOD_START_META_PREFIX = 'vodStart:';
 const PRUNE_ALARM = 'ws-prune';
 /** 定期 prune の間隔(分)と、起動時に prune を走らせる「前回からの経過」しきい値 */
 const PRUNE_PERIOD_MIN = 24 * 60;
@@ -55,18 +59,27 @@ async function handle(req: Req): Promise<ResMap[Req['type']]> {
       return getEmotes(db, req.names);
     case 'ws:query':
       return queryMessages(db, req);
+    case 'ws:changes':
+      return queryChanges(db, req);
+    case 'ws:count':
+      return countMessages(db, req);
     case 'ws:userStats':
       return getUserStats(db, req.user);
+    case 'ws:openViewer':
+      await chrome.tabs.create({ url: viewerUrl(req) });
+      return { ok: true };
     case 'ws:getVodStart':
-      return { ts: (await getMeta<number>(db, VOD_START_META_PREFIX + req.vodId)) ?? null };
+      return { ts: (await getMeta<number>(db, META_VOD_START_PREFIX + req.vodId)) ?? null };
     case 'ws:setVodStart':
-      await setMeta(db, VOD_START_META_PREFIX + req.vodId, req.ts);
+      await setMeta(db, META_VOD_START_PREFIX + req.vodId, req.ts);
       return { ok: true };
     case 'ws:stats':
       return getStats(db);
     case 'ws:clear':
       await clearAll(db);
       return { ok: true };
+    case 'ws:deleteUsers':
+      return { deleted: await deleteUsers(db, req.users) };
     case 'ws:getSettings':
       return loadSettings();
     case 'ws:setSettings':
@@ -76,10 +89,16 @@ async function handle(req: Req): Promise<ResMap[Req['type']]> {
   }
 }
 
-chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
   if (!isReq(msg)) return false;
-  handle(msg).then(sendResponse, (err: unknown) => {
-    console.error('[Who Said] handler error', msg.type, err);
+  const req = isAllowedSender(msg.type, sender, chrome.runtime.id, chrome.runtime.getURL('')) ? sanitizeReq(msg) : null;
+  if (!req) {
+    console.warn('[Who Said] rejected request', msg.type);
+    sendResponse(undefined);
+    return false;
+  }
+  handle(req).then(sendResponse, (err: unknown) => {
+    console.error('[Who Said] handler error', req.type, err);
     sendResponse(undefined);
   });
   return true; // 非同期応答

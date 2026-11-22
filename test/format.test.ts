@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  adjustNameColor,
-  formatOffset,
-  formatOffsetDisplay,
-  formatTime,
-  luminance,
-  parseColor,
-  vodUrl,
-} from '../src/content/format';
+import { adjustNameColor, formatOffset, formatOffsetDisplay, formatTime, luminance, parseColor, vodUrl } from '../src/shared/format';
 
 describe('formatTime', () => {
   const now = new Date(2026, 10, 10, 21, 0).getTime(); // 2026-11-10 21:00 ローカル

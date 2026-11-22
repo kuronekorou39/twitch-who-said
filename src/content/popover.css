@@ -1,9 +1,11 @@
+@import '../shared/scrollbar.css';
+
 /* Shadow DOM 内。Twitch の CSS 変数を :host 経由で参照し、ダーク/ライトに追従する */
 :host {
   all: initial;
   position: fixed;
   z-index: 5000;
-  width: 320px;
+  width: 280px; /* popover.ts の WIDTH_PX と揃える */
   max-height: 480px;
   display: flex;
   flex-direction: column;
@@ -23,6 +25,7 @@
 }
 * {
   box-sizing: border-box;
+  --scrollbar-fg: var(--color-text-base, #efeff1);
 }
 button,
 input,
@@ -53,11 +56,6 @@ select {
   flex: 1 1 auto;
   min-width: 0;
 }
-.count {
-  color: var(--color-text-alt-2, #adadb8);
-  font-size: 12px;
-  flex: none;
-}
 .scope {
   flex: none;
   padding: 2px 4px;
@@ -68,10 +66,16 @@ select {
   cursor: pointer;
 }
 .close,
-.reset {
+.reset,
+.search-toggle,
+.open-viewer {
   flex: none;
   width: 24px;
   height: 24px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -85,13 +89,22 @@ select {
 }
 .close:hover,
 .reset:hover,
+.search-toggle:hover,
+.open-viewer:hover,
 .scope:hover {
   background: var(--color-background-interactable-hover, rgba(83, 83, 95, 0.48));
 }
+.search-toggle[aria-expanded="true"] {
+  color: var(--color-text-link, #bf94ff);
+}
 
+/* 絞り込み欄は一覧の下。フッタの検索ボタンで出し入れする */
 .filter {
   flex: none;
-  padding: 0 8px 8px;
+  padding: 8px 8px 0;
+}
+.filter[hidden] {
+  display: none;
 }
 .filter input {
   width: 100%;
@@ -109,6 +122,8 @@ select {
   flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* 上に古いページを足したときの位置補正は自前で行う(ブラウザの補正と二重にしない) */
+  overflow-anchor: none;
   border-top: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
   border-bottom: 1px solid var(--color-border-base, rgba(83, 83, 95, 0.48));
   padding: 4px 0;
@@ -166,12 +181,37 @@ select {
   height: 1px;
 }
 
+/* 右下のサイズ変更つまみ。斜線 2 本の控えめな見た目 */
+.grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+  color: var(--color-text-alt-2, #adadb8);
+  opacity: 0.5;
+  background:
+    linear-gradient(135deg, transparent 55%, currentColor 55%, currentColor 62%, transparent 62%, transparent 75%, currentColor 75%, currentColor 82%, transparent 82%);
+}
+.grip:hover {
+  opacity: 1;
+}
 .footer {
   flex: none;
-  padding: 6px 12px;
+  padding: 4px 14px 4px 12px; /* 右はつまみの分あける */
   font-size: 11px;
   color: var(--color-text-alt-2, #adadb8);
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: center;
+  gap: 4px;
+}
+.count {
+  flex: 1 1 auto;
+}
+
+.grip:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
 }

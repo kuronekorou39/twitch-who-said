@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectPage, samePage } from '../src/content/page';
+import { detectPage, samePage } from '../src/shared/page';
 
 const base = 'https://www.twitch.tv';
 

@@ -48,12 +48,7 @@ export function hashIdInput(channel: string, user: string, text: string, ts: num
   return `${channel}\n${user}\n${text}\n${Math.round(ts / 1000)}`;
 }
 
-export async function messageHashId(
-  channel: string,
-  user: string,
-  text: string,
-  ts: number,
-): Promise<string> {
+export async function messageHashId(channel: string, user: string, text: string, ts: number): Promise<string> {
   const data = new TextEncoder().encode(hashIdInput(channel, user, text, ts));
   const digest = await crypto.subtle.digest('SHA-1', data);
   return toHex(new Uint8Array(digest)).slice(0, HASH_ID_LENGTH);

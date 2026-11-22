@@ -48,8 +48,7 @@ export function buildExcludeSet(settings: Settings, selfLogin?: string | null): 
 }
 
 function normalize(s: Settings): Settings {
-  const nonNeg = (n: unknown, fallback: number) =>
-    typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+  const nonNeg = (n: unknown, fallback: number) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback);
   return {
     retentionDays: nonNeg(s.retentionDays, DEFAULT_SETTINGS.retentionDays),
     maxPerUser: nonNeg(s.maxPerUser, DEFAULT_SETTINGS.maxPerUser),

@@ -1,4 +1,4 @@
-/** ポップオーバー表示用の純粋な整形関数 */
+/** 吹き出しと履歴ビューアで共用する純粋な整形関数 */
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -41,7 +41,7 @@ export function formatOffsetDisplay(sec: number): string {
 }
 
 export function vodUrl(vodId: string, offsetSec?: number): string {
-  const base = `https://www.twitch.tv/videos/${vodId}`;
+  const base = `https://www.twitch.tv/videos/${encodeURIComponent(vodId)}`;
   return offsetSec === undefined ? base : `${base}?t=${formatOffset(offsetSec)}`;
 }
 

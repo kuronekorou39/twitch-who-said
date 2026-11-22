@@ -1,4 +1,4 @@
-import { fireAndForget } from '../shared/messages';
+import { isContextAlive, rpc } from '../shared/messages';
 import type { IngestItem } from '../shared/types';
 import type { ExtractedMessage } from './extract';
 
@@ -8,6 +8,9 @@ const FLUSH_DEBOUNCE_MS = 300;
 const FLUSH_BATCH_SIZE = 50;
 /** 送信待ちキューの上限。超えたら古い順に捨てる */
 const QUEUE_CAP = 1000;
+/** 送信に失敗したときの再送間隔(倍々に伸ばす) */
+const RETRY_MIN_MS = 1000;
+const RETRY_MAX_MS = 30_000;
 
 /** Twitch がログイン中に設定する `login` cookie から自分の login 名を読む(excludeSelf 用) */
 export function readSelfLogin(cookie: string = document.cookie): string | undefined {
@@ -45,6 +48,10 @@ export class ChatCapture {
   private pendingEmotes: Record<string, string> = {};
   private readonly sentEmotes = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** 応答待ちの送信数 */
+  private inflight = 0;
+  /** 0 以外なら再送待ち。次に失敗したときの待ち時間の元になる */
+  private retryMs = 0;
   readonly stats: CaptureStats = { seen: 0, extracted: 0, flushed: 0 };
 
   constructor(private readonly opts: CaptureOptions) {}
@@ -62,7 +69,7 @@ export class ChatCapture {
   stop(): void {
     this.observer?.disconnect();
     this.observer = null;
-    this.flush();
+    this.flush(true);
   }
 
   private handleAdded(nodes: Iterable<Node>, existing: boolean): void {
@@ -79,9 +86,7 @@ export class ChatCapture {
       const { emotes, ...item } = extracted;
       if (emotes) {
         for (const [name, url] of Object.entries(emotes)) {
-          if (this.sentEmotes.has(name)) continue;
-          this.sentEmotes.add(name);
-          this.pendingEmotes[name] = url;
+          if (!this.sentEmotes.has(name)) this.pendingEmotes[name] = url;
         }
       }
       this.enqueue(item);
@@ -91,7 +96,8 @@ export class ChatCapture {
   private enqueue(item: IngestItem): void {
     this.queue.push(item);
     if (this.queue.length > QUEUE_CAP) this.queue.splice(0, this.queue.length - QUEUE_CAP);
-    if (this.queue.length >= FLUSH_BATCH_SIZE) {
+    // 再送待ちの間は件数で急かさない(タイマーに任せる)
+    if (this.queue.length >= FLUSH_BATCH_SIZE && this.retryMs === 0) {
       this.flush();
       return;
     }
@@ -100,7 +106,12 @@ export class ChatCapture {
     }
   }
 
-  flush(): void {
+  /**
+   * キューを SW へ送る。失敗したら先頭に戻して間隔を空けて再送する(取り込みは冪等なので二重送信は無害)。
+   * 通常は同時に 1 つだけ送り、force(ページ離脱・監視停止)のときは応答待ちでも送る
+   */
+  flush(force = false): void {
+    if (this.inflight > 0 && !force) return;
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -108,9 +119,34 @@ export class ChatCapture {
     if (this.queue.length === 0) return;
     const items = this.queue;
     this.queue = [];
-    this.stats.flushed += items.length;
-    const emotes = Object.keys(this.pendingEmotes).length ? this.pendingEmotes : undefined;
+    const sentEmotes = this.pendingEmotes;
     this.pendingEmotes = {};
-    fireAndForget({ type: 'ws:ingest', items, self: readSelfLogin(), emotes });
+    const emotes = Object.keys(sentEmotes).length ? sentEmotes : undefined;
+    this.inflight++;
+    // SW の処理が失敗すると応答は undefined になる
+    void rpc({ type: 'ws:ingest', items, self: readSelfLogin(), emotes })
+      .then(
+        (res) => res !== undefined,
+        () => false,
+      )
+      .then((ok) => {
+        this.inflight--;
+        if (ok) {
+          this.stats.flushed += items.length;
+          for (const name of Object.keys(sentEmotes)) this.sentEmotes.add(name);
+          this.retryMs = 0;
+          if (this.queue.length > 0) this.flush();
+        } else if (isContextAlive()) {
+          this.requeue(items, sentEmotes);
+        }
+      });
+  }
+
+  private requeue(items: IngestItem[], emotes: Record<string, string>): void {
+    this.queue = [...items, ...this.queue].slice(-QUEUE_CAP);
+    this.pendingEmotes = { ...emotes, ...this.pendingEmotes };
+    this.retryMs = Math.min(this.retryMs ? this.retryMs * 2 : RETRY_MIN_MS, RETRY_MAX_MS);
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), this.retryMs);
   }
 }

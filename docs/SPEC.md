@@ -2,7 +2,7 @@
 
 ## 実装との差分(2026-11-10 時点)
 
-本書は当初仕様。実装時に実 DOM を確認して以下を変更した。詳細は README の「実装メモ」も参照。
+本書は当初仕様。実装時に実 DOM を確認して以下を変更した。
 
 | 項目 | 仕様 | 実装 |
 |---|---|---|
@@ -11,14 +11,26 @@
 | 近傍重複ウィンドウ | ±2 秒 | ±10 秒(VOD の日時は「uploadDate + 再生位置」の推定値でライブ取り込み時刻と数秒ずれる)。既存行の時刻は分単位なので、その 1 分間を同一視する(`approxTs`)。取り込み時に弾けなかった分は prune の ④ で掃除 |
 | VOD 開始日時 | ページ内 ld+json → UI の日付表示 | 実行時 DOM に ld+json が無いため、同じ URL の SSR HTML を同一オリジンで fetch して `uploadDate` を読む。UI の日付表示は相対表記のみで使えない |
 | VOD のチャンネル | チャット内リンク or ld+json author | 動画情報欄 `.metadata-layout__support` のチャンネルリンク href。フォールバックは ld+json の name 末尾 |
-| Export / Import | SW の RPC(`ws:export` / `ws:import`) | 設定画面から直接 IndexedDB(拡張オリジンで共有)を読み書き。巨大データを `sendMessage` で往復させない。RPC は設けていない |
+| Export / Import | SW の RPC(`ws:export` / `ws:import`) | 設定画面から直接 IndexedDB(拡張オリジンで共有)を読み書き。巨大データを `sendMessage` で往復させない。RPC は設けていない。インポートはファイルをストリームで読む |
 | 自分の除外 | 設定のみ | content script が `login` cookie を読み、取り込みバッチに `self` を添えて SW 側で除外 |
 | SPA 遷移 | `history.pushState` を監視 | isolated world からはフックできないため Navigation API(`navigatesuccess`)+ popstate + 1 秒ポーリング。遷移直後は旧コンテナが残るため、別のコンテナ要素が現れるまで待つ。さらに 3 秒ごとにコンテナの生存を確認し、再マウントされていれば張り直す |
 | 取り込み開始時の既存行 | 流れたメッセージのみ | 新しく現れたコンテナに既に表示されている行も 1 度取り込む(重複は SW が弾く) |
 | セレクタ破損の自己診断 | 30 秒で 0 件なら警告 | 「行らしき要素があるのに 1 件も抽出できない」ときだけ警告(静かなチャットでは出さない)。結果を `chrome.storage.local` に保存し、設定画面にバッジ表示 |
 | エモート画像 | 本バージョンではやらない(12 章) | 取り込み時に エモート名 → URL を `emotes` ストアに保存し、ポップオーバーで既知のものを画像表示(Twitch 公式エモートのみ。7TV 等は対象外) |
-| ポップオーバーの位置 | 純正カードの隣に固定 | ドラッグで移動可。位置は localStorage に記憶、「↺」で自動配置に戻す |
+| ポップオーバーの位置 | 純正カードの隣に固定 | ドラッグで移動可。右下のつまみでサイズも変えられる(下限 220×160px、画面内に収める)。位置・サイズは localStorage に記憶、「↺」で両方を既定に戻す(ヘッダのダブルクリックは位置だけ、つまみのダブルクリックはサイズだけ) |
 | 一覧のチャンネル名 | 常に表示 | 「全チャンネル」のときだけ表示 |
+| 一覧の並び | 新しい順(上が最新)。下へスクロールで追加ロード | チャット欄と同じく上が古く下が最新。開いた直後は最下部、上端までスクロールすると古いページを上に足す |
+| 開いている間の新着 | 記載なし(開いた時点の一覧) | 2 秒ごとに書き込み連番(`seq`、DB v4 の `by_seq`)より後の行を問い合わせ(`ws:changes`)、発言時刻の位置に足す。一度に多い新着・他タブや VOD から遅れて届く行も漏らさない。最下部を見ているときだけ追従し、非表示のタブでは問い合わせない |
+| ページ送り | `before` は時刻 | 同時刻の行を落とさないよう `(ts, id)` のカーソル。1 回の走査は 5000 行までで、続きはカーソルから再開する |
+| 一覧の行数 | 記載なし | DOM に置く行は吹き出し 1000・ビューア 3000 まで。最新を見ている間は超えた分を上から外し、遡れば読み直せる |
+| 取り込みの再送 | 記載なし | SW への送信に失敗したら先頭に戻し、1 秒から最大 30 秒の間隔で再送する(取り込みは冪等) |
+| 除外の追加 | 以後の取り込みを止める | 保存時に、追加したユーザーの保存済み発言も消すか確認する |
+| メッセージの権限 | 記載なし | SW は送信元を確認し、全削除・prune・設定変更・ユーザー削除は拡張のページからのみ受け付ける。ペイロードも実行時に検証する |
+| 純正カードを閉じたとき | 記載なし(実装は一緒に閉じていた) | こちらは閉じずにその場に残る。閉じるのは ×・Esc・別ユーザーのクリック(そのユーザーに切り替わる)。純正カードと並べて出したときは外側クリックでも閉じない |
+| ポップオーバーの見た目 | 幅 320px。ヘッダに件数、その下に絞り込み欄、フッタに「全 N 件 / 初回日付」 | 幅 280px。件数はフッタ左の「N 件」だけ(初回日付は出さない)。絞り込み欄は既定で非表示で、フッタの検索ボタンで一覧の下に出し入れする(しまうと絞り込みも解除)。位置を戻す「↺」はフッタ右端 |
+| ツールバーのアイコン | なし | ポップアップに統計(メッセージ・ユーザー・チャンネル数)と、履歴ビューア・設定への入口。Twitch のチャンネルを開いているときは「#<channel> の履歴」の近道も出す |
+| 履歴ビューア | なし | 拡張ページ `src/viewer/viewer.html`。全メッセージをユーザー・チャンネル・本文で絞り込んで読む(下が最新、上スクロールで古いもの、新着は 3 秒ごとに追記)。絞り込みは URL(`?user=&channel=&q=`)に残る。ポップオーバーのフッタからも開ける(content script は tabs API を使えないので `ws:openViewer` で SW に開かせる)。ユーザーなしでチャンネルを絞るため DB v3 で `by_channel_ts` を追加 |
+| スコープ切替 | このチャンネルのみ / 全チャンネル | そのユーザーの発言が保存されている他チャンネルも個別に選べる(`ws:userStats` が `channels` を返す)。他チャンネルの選択は次回に引き継がない |
 | ライブの既存行の時刻 | 取り込み時刻 | タイムスタンプ表示 ON なら行の時刻、OFF なら既存行は取り込まない(新着行は取り込み時刻) |
 | manifest | `manifest.json` | CRXJS の `manifest.config.ts`(version は package.json から) |
 | ディレクトリ | `src/sw/db.ts` | DB 層は `src/db/`(SW と設定画面の両方から使う) |
@@ -81,7 +93,7 @@ Twitch のチャット欄でユーザー名をクリックすると、そのユ�
 | N-4 | `unlimitedStorage` 権限を使い、ブラウザによる自動削除（eviction）対象から外す |
 | N-5 | Twitch の React ツリー（内部 state / props）に依存しない。DOM 属性とセレクタのみ使用し、セレクタは 1 ファイルに集約して差し替え可能にする |
 | N-6 | 権限は最小限: `storage`, `unlimitedStorage`, `alarms`（削除スケジュール）, host は `https://www.twitch.tv/*` のみ |
-| N-7 | 外部通信ゼロ（アナリティクス含む） |
+| N-7 | 外部通信ゼロ（アナリティクス含む）。例外は Twitch CDN からのエモート画像の読み込みのみ |
 
 ---
 
@@ -289,7 +301,7 @@ export const SELECTORS = {
 └──────────────────────────────────────┘
 ```
 
-- 幅 320px、最大高さ 480px、内部スクロール
+- 幅 280px、最大高さ 480px、内部スクロール(右下のつまみで変更可)
 - 本文はプレーンテキスト表示（エモート画像化はしない。`:emote:` のまま）
 - 日時は端末ローカル。同日なら時刻のみ
 - VOD リンク: `https://www.twitch.tv/videos/<vodId>?t=1h23m45s`
@@ -303,7 +315,7 @@ export const SELECTORS = {
 
 ### 5.4 データ取得
 
-- `ws:query { user, channel?, keyword?, before?: ts, limit: 50 }` → SW が `by_user_channel_ts` または `by_user_ts` を `openCursor(range, 'prev')` で走査
+- `ws:query { user, channel?, keyword?, before?: { ts, id }, limit: 50 }` → SW が `by_user_channel_ts` または `by_user_ts` を `openCursor(range, 'prev')` で走査
 - keyword は SW 側でカーソル走査中に `text.includes()` でフィルタ（インデックスなしで良い。ユーザー単位なので件数は小さい）
 - `before` でページング
 
@@ -353,12 +365,13 @@ interface Settings {
 ```ts
 type Req =
   | { type: 'ws:ingest'; items: ChatMessage[] }
-  | { type: 'ws:query'; user: string; channel?: string; keyword?: string; before?: number; limit: number }
+  | { type: 'ws:query'; user: string; channel?: string; keyword?: string; before?: PageCursor; limit: number }
+  | { type: 'ws:changes'; user: string; channel?: string; keyword?: string; afterSeq: number; limit: number }
+  | { type: 'ws:count'; user: string; channel?: string }
   | { type: 'ws:userStats'; user: string }                 // 件数・初回日時
   | { type: 'ws:getVodStart'; vodId: string }
   | { type: 'ws:setVodStart'; vodId: string; ts: number }
   | { type: 'ws:stats' } | { type: 'ws:prune' } | { type: 'ws:clear' }
-  | { type: 'ws:export' } | { type: 'ws:import'; lines: string[] }
   | { type: 'ws:getSettings' } | { type: 'ws:setSettings'; patch: Partial<Settings> };
 ```
 

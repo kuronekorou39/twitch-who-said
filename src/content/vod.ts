@@ -30,8 +30,7 @@ export function parseVodStartFromLdJson(json: string): number | null {
 /** SSR された HTML 文字列から ld+json を順に試す */
 export function parseVodStartFromHtml(html: string): number | null {
   const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
+  for (const m of html.matchAll(re)) {
     const ts = parseVodStartFromLdJson(m[1] ?? '');
     if (ts !== null) return ts;
   }
@@ -41,8 +40,7 @@ export function parseVodStartFromHtml(html: string): number | null {
 /** ld+json の name("... - <login>")からチャンネル login を推定する(最後の手段) */
 export function parseChannelFromHtml(html: string): string | null {
   const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html))) {
+  for (const m of html.matchAll(re)) {
     try {
       for (const n of flattenLd(JSON.parse(m[1] ?? '') as unknown)) {
         if (typeof n.name !== 'string') continue;
@@ -110,10 +108,7 @@ export async function fetchSsrHtml(): Promise<string | null> {
 }
 
 /** チャンネル login を解決する。DOM のリンクを待ち、だめなら SSR HTML から推定 */
-export async function resolveVodChannel(
-  ssrHtml: () => Promise<string | null>,
-  isCancelled: () => boolean,
-): Promise<string | null> {
+export async function resolveVodChannel(ssrHtml: () => Promise<string | null>, isCancelled: () => boolean): Promise<string | null> {
   const started = Date.now();
   while (!isCancelled() && Date.now() - started < CHANNEL_WAIT_MAX_MS) {
     const ch = readChannelFromDom();

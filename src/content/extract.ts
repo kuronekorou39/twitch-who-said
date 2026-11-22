@@ -1,5 +1,5 @@
 import type { IngestItem } from '../shared/types';
-import { SELECTORS, type LiveSelectors, type VodSelectors } from './selectors';
+import { type LiveSelectors, SELECTORS, type VodSelectors } from './selectors';
 
 export interface LiveContext {
   channel: string;
@@ -27,11 +27,7 @@ export type ExtractedMessage = IngestItem & { emotes?: Record<string, string> };
  * ライブチャットの 1 行 → メッセージ。失敗したら null(例外は投げない)。
  * DOM 読み取りのみを行い、I/O はしない。
  */
-export function extractLiveMessage(
-  line: Element,
-  ctx: LiveContext,
-  sel: LiveSelectors = SELECTORS.live,
-): ExtractedMessage | null {
+export function extractLiveMessage(line: Element, ctx: LiveContext, sel: LiveSelectors = SELECTORS.live): ExtractedMessage | null {
   try {
     const user = line.getAttribute(sel.userLoginAttr)?.trim().toLowerCase();
     if (!user) return null;
@@ -63,8 +59,7 @@ export function extractLiveMessage(
 
     if (ctx.existing) item.approxTs = true; // 時刻表示は分単位
 
-    const msgId =
-      line.getAttribute(sel.msgIdAttr) ?? line.querySelector(`[${sel.msgIdAttr}]`)?.getAttribute(sel.msgIdAttr);
+    const msgId = line.getAttribute(sel.msgIdAttr) ?? line.querySelector(`[${sel.msgIdAttr}]`)?.getAttribute(sel.msgIdAttr);
     if (msgId) item.id = msgId;
 
     const color = nameEl?.style.color;
@@ -83,11 +78,7 @@ export function extractLiveMessage(
 }
 
 /** VOD チャットリプレイの 1 行 → メッセージ。失敗したら null */
-export function extractVodMessage(
-  line: Element,
-  ctx: VodContext,
-  sel: VodSelectors = SELECTORS.vod,
-): ExtractedMessage | null {
+export function extractVodMessage(line: Element, ctx: VodContext, sel: VodSelectors = SELECTORS.vod): ExtractedMessage | null {
   try {
     const nameEl = line.querySelector<HTMLElement>(sel.displayName);
     const user =
@@ -165,19 +156,14 @@ export function parseClockTime(text: string, now: number): number | null {
  * メンション・リンクなど未知の span もテキストノード経由で拾えるため、Twitch の
  * フラグメント種別の追加に強い。
  */
-export function collectText(
-  body: Node,
-  emoteImgSelector: string,
-  opts: { skipLeadingColon?: boolean } = {},
-): string {
+export function collectText(body: Node, emoteImgSelector: string, opts: { skipLeadingColon?: boolean } = {}): string {
   const doc = body.ownerDocument ?? document;
   const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
   // VOD 行は本文の先頭に区切りの ":" だけの要素が入る
   const skip = opts.skipLeadingColon ? firstColonSeparator(body) : null;
   let out = '';
-  let n: Node | null;
-  while ((n = walker.nextNode())) {
-    if (skip && skip.contains(n)) continue;
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (skip?.contains(n)) continue;
     if (n.nodeType === Node.TEXT_NODE) {
       out += n.nodeValue ?? '';
     } else if (n.nodeType === Node.ELEMENT_NODE && (n as Element).tagName === 'IMG') {
@@ -197,8 +183,9 @@ export function collectEmotes(body: Element, emoteImgSelector: string): Record<s
   for (const img of body.querySelectorAll<HTMLImageElement>(emoteImgSelector)) {
     const name = img.getAttribute('alt')?.trim();
     const src = img.getAttribute('src');
-    if (!name || !src || !src.startsWith('https://')) continue;
-    (out ??= {})[name] = src;
+    if (!name || !src?.startsWith('https://')) continue;
+    out ??= {};
+    out[name] = src;
   }
   return out;
 }

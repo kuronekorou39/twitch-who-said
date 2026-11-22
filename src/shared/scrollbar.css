@@ -1,0 +1,8 @@
+/* 目立たない細いスクロールバー。ホバー中だけ少し濃くする。色の元は読み込む側の --scrollbar-fg */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--scrollbar-fg) 18%, transparent) transparent;
+}
+*:hover {
+  scrollbar-color: color-mix(in srgb, var(--scrollbar-fg) 35%, transparent) transparent;
+}

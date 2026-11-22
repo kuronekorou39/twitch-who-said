@@ -1,4 +1,5 @@
-import type { ChatMessage, DbStats, IngestItem, Settings, UserStats } from './types';
+import type { ChangesResult, QueryResult } from '../db/db';
+import type { DbStats, IngestItem, PageCursor, Settings, UserStats } from './types';
 
 /** content / options → SW のリクエスト */
 export type Req =
@@ -16,29 +17,47 @@ export type Req =
       user: string;
       channel?: string;
       keyword?: string;
-      before?: number;
+      before?: PageCursor;
       limit: number;
     }
+  /** 指定の連番より後に書き込まれた行(開いている一覧の新着) */
+  | {
+      type: 'ws:changes';
+      user: string;
+      channel?: string;
+      keyword?: string;
+      afterSeq: number;
+      limit: number;
+    }
+  | { type: 'ws:count'; user: string; channel?: string }
   | { type: 'ws:userStats'; user: string }
+  /** 履歴ビューアを新しいタブで開く(content script は tabs API を使えないので SW に頼む) */
+  | { type: 'ws:openViewer'; user?: string; channel?: string }
   | { type: 'ws:getVodStart'; vodId: string }
   | { type: 'ws:setVodStart'; vodId: string; ts: number }
   | { type: 'ws:stats' }
   | { type: 'ws:prune' }
   | { type: 'ws:clear' }
+  /** 指定ユーザーの保存済み発言を消す(除外に追加したとき) */
+  | { type: 'ws:deleteUsers'; users: string[] }
   | { type: 'ws:getSettings' }
   | { type: 'ws:setSettings'; patch: Partial<Settings> };
 
 /** リクエスト種別ごとの応答型 */
 export interface ResMap {
   'ws:ingest': { accepted: number; skipped: number };
-  'ws:query': { items: ChatMessage[]; hasMore: boolean };
+  'ws:query': QueryResult;
+  'ws:changes': ChangesResult;
+  'ws:count': number;
   'ws:userStats': UserStats;
+  'ws:openViewer': { ok: true };
   'ws:emotes': Record<string, string>;
   'ws:getVodStart': { ts: number | null };
   'ws:setVodStart': { ok: true };
   'ws:stats': DbStats;
   'ws:prune': { deleted: number; byRetention: number; byPerUser: number; byTotal: number; byDuplicate: number };
   'ws:clear': { ok: true };
+  'ws:deleteUsers': { deleted: number };
   'ws:getSettings': Settings;
   'ws:setSettings': Settings;
 }
@@ -58,22 +77,11 @@ export function isContextAlive(): boolean {
   }
 }
 
-/** 応答を待つ RPC(popover / options 用)。同期例外も reject に変換する */
+/** SW への RPC。SW が停止していても sendMessage が起こす。同期例外も reject に変換する */
 export function rpc<T extends Req['type']>(req: ReqOf<T>): Promise<ResOf<T>> {
   try {
     return chrome.runtime.sendMessage(req) as Promise<ResOf<T>>;
   } catch (e) {
     return Promise.reject(e instanceof Error ? e : new Error(String(e)));
-  }
-}
-
-/** 応答を待たない送信(capture 用)。SW が停止していても sendMessage が起こす */
-export function fireAndForget(req: Req): void {
-  try {
-    void chrome.runtime.sendMessage(req).catch(() => {
-      /* SW 未起動・ポート切断などは無視。再送は呼び出し側のキューに任せる */
-    });
-  } catch {
-    /* コンテキスト無効(拡張の再読み込み後)。このタブの content script はもう動けない */
   }
 }

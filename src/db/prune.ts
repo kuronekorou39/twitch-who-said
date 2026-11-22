@@ -1,7 +1,16 @@
 import type { IDBPTransaction } from 'idb';
 import { isNearTs, nearTsRange } from '../shared/id';
 import type { ChatMessage, Settings, UserRecord } from '../shared/types';
-import { META_CHANNELS, META_LAST_PRUNE, type ChannelCounts, type WhoSaidDatabase, type WhoSaidDB } from './db';
+import {
+  type ChannelCounts,
+  getMeta,
+  META_CHANNELS,
+  META_LAST_PRUNE,
+  META_PRUNE_DUP_RESUME,
+  META_VOD_START_PREFIX,
+  type WhoSaidDatabase,
+  type WhoSaidDB,
+} from './db';
 
 /** 1 トランザクションで削除する最大件数。間に yield を挟んで SW のイベントループを占有しない */
 const DEFAULT_CHUNK = 5000;
@@ -39,14 +48,8 @@ export async function prune(db: WhoSaidDatabase, settings: Settings, opts: Prune
   // ① 保持期間
   if (settings.retentionDays > 0) {
     const cutoff = now() - settings.retentionDays * 86_400_000;
-    result.byRetention = await deleteByIndex(
-      db,
-      'by_captured',
-      IDBKeyRange.upperBound(cutoff, true),
-      Infinity,
-      chunk,
-      yieldFn,
-    );
+    result.byRetention = await deleteByIndex(db, 'by_captured', IDBKeyRange.upperBound(cutoff, true), Infinity, chunk, yieldFn);
+    await pruneAuxiliary(db, cutoff);
   }
 
   // ② ユーザーあたり上限
@@ -81,6 +84,36 @@ export async function prune(db: WhoSaidDatabase, settings: Settings, opts: Prune
   result.deleted = result.byRetention + result.byPerUser + result.byTotal + result.byDuplicate;
   await db.put('meta', { key: META_LAST_PRUNE, value: now() });
   return result;
+}
+
+/** 保持期間を過ぎたエモートと VOD 開始日時のキャッシュを消す。どちらも必要になれば取り直せる */
+async function pruneAuxiliary(db: WhoSaidDatabase, cutoff: number): Promise<void> {
+  const tx = db.transaction(['emotes', 'meta'], 'readwrite');
+  let emote = await tx.objectStore('emotes').openCursor();
+  while (emote) {
+    if (emote.value.seenAt < cutoff) await emote.delete();
+    emote = await emote.continue();
+  }
+  const range = IDBKeyRange.bound(META_VOD_START_PREFIX, `${META_VOD_START_PREFIX}￿`);
+  let vod = await tx.objectStore('meta').openCursor(range);
+  while (vod) {
+    if (typeof vod.value.value === 'number' && vod.value.value < cutoff) await vod.delete();
+    vod = await vod.continue();
+  }
+  await tx.done;
+}
+
+/** 指定ユーザーの保存済み発言をすべて消す(除外に追加したとき) */
+export async function deleteUsers(db: WhoSaidDatabase, users: string[], opts: PruneOptions = {}): Promise<number> {
+  const chunk = opts.chunk ?? DEFAULT_CHUNK;
+  const yieldFn = opts.yieldFn ?? defaultYield;
+  let deleted = 0;
+  for (const raw of users) {
+    const user = raw.trim().toLowerCase();
+    if (!user) continue;
+    deleted += await deleteByIndex(db, 'by_user_ts', IDBKeyRange.bound([user, -Infinity], [user, Infinity]), Infinity, chunk, yieldFn);
+  }
+  return deleted;
 }
 
 type MessageIndex = 'by_captured' | 'by_user_ts' | 'by_ts';
@@ -125,26 +158,32 @@ async function deleteByIndex(
 
 /**
  * by_user_channel_ts を昇順に走査し、同 user/channel で本文が同じ・時刻が近い(isNearTs)ものを 1 件に減らす。
- * 分単位の概算(approxTs)と精密な時刻が並んでいれば精密なほうを残す。chunk 件ごとにトランザクションを区切る
+ * 分単位の概算(approxTs)と精密な時刻が並んでいれば精密なほうを残す。
+ *
+ * 走査は読み取りトランザクションで行い、消す行があるときだけ短い書き込みトランザクションを張るので、
+ * 取り込みを止めない。進捗は meta に残し、Service Worker が途中で止まっても次回は続きから再開する
  */
 async function deleteNearDuplicates(db: WhoSaidDatabase, chunk: number, yieldFn: () => Promise<void>): Promise<number> {
   let deleted = 0;
-  let resumeAfter: [string, string, number] | null = null;
+  let resume = (await getMeta<DupResume>(db, META_PRUNE_DUP_RESUME)) ?? null;
   let group = '';
   /** 現在の user/channel で、まだ相手になり得る直近の生存レコード */
   let recent: ChatMessage[] = [];
   for (;;) {
-    const tx = db.transaction(['messages', 'users', 'meta'], 'readwrite');
-    const messages = tx.objectStore('messages');
-    const affectedUsers = new Set<string>();
-    const channelDelta = new Map<string, number>();
-    const range = resumeAfter ? IDBKeyRange.lowerBound(resumeAfter, true) : null;
-    let cursor = await messages.index('by_user_channel_ts').openCursor(range, 'next');
+    const readTx = db.transaction('messages', 'readonly');
+    const victims: ChatMessage[] = [];
+    // 同じインデックスキーの行は主キー順に並ぶので、キーと id の組で続きの位置が一意に決まる
+    const range = resume ? IDBKeyRange.lowerBound(resume.key) : null;
+    let cursor = await readTx.store.index('by_user_channel_ts').openCursor(range, 'next');
     let n = 0;
     while (cursor && n < chunk) {
       const v = cursor.value;
+      if (resume && indexedDB.cmp(cursor.key, resume.key) === 0 && v.id <= resume.id) {
+        cursor = await cursor.continue();
+        continue;
+      }
       n++;
-      resumeAfter = cursor.key;
+      resume = { key: cursor.key, id: v.id };
       const g = `${v.user}\n${v.channel}`;
       if (g !== group) {
         group = g;
@@ -161,19 +200,39 @@ async function deleteNearDuplicates(db: WhoSaidDatabase, chunk: number, yieldFn:
           victim = dup;
           recent[recent.indexOf(dup)] = v;
         }
-        await messages.delete(victim.id);
-        affectedUsers.add(victim.user);
-        channelDelta.set(victim.channel, (channelDelta.get(victim.channel) ?? 0) + 1);
-        deleted++;
+        victims.push(victim);
       }
       cursor = await cursor.continue();
     }
+    const finished = !cursor;
+    await readTx.done;
+
+    const tx = db.transaction(['messages', 'users', 'meta'], 'readwrite');
+    const messages = tx.objectStore('messages');
+    const affectedUsers = new Set<string>();
+    const channelDelta = new Map<string, number>();
+    for (const victim of victims) {
+      // 走査の後に別の処理で消えていたら数えない
+      if ((await messages.getKey(victim.id)) === undefined) continue;
+      await messages.delete(victim.id);
+      affectedUsers.add(victim.user);
+      channelDelta.set(victim.channel, (channelDelta.get(victim.channel) ?? 0) + 1);
+      deleted++;
+    }
     if (affectedUsers.size > 0) await applyDeletions(tx, affectedUsers, channelDelta);
+    const meta = tx.objectStore('meta');
+    if (finished || !resume) await meta.delete(META_PRUNE_DUP_RESUME);
+    else await meta.put({ key: META_PRUNE_DUP_RESUME, value: resume });
     await tx.done;
-    if (!cursor) break; // 走査し尽くした
+    if (finished) break;
     await yieldFn();
   }
   return deleted;
+}
+
+interface DupResume {
+  key: [string, string, number];
+  id: string;
 }
 
 type RwTx = IDBPTransaction<WhoSaidDB, ('messages' | 'users' | 'meta')[], 'readwrite'>;

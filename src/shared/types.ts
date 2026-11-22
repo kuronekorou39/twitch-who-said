@@ -22,10 +22,18 @@ export interface ChatMessage {
   color?: string;
   /** 取り込み日時 epoch ms。prune の基準 */
   capturedAt: number;
+  /** DB に書いた順の連番。開いている一覧が新着を漏れなく拾うために使う(v4 より前の行には無い) */
+  seq?: number;
 }
 
-/** content script から SW へ送る取り込み前のメッセージ。id は SW 側で補完する */
-export type IngestItem = Omit<ChatMessage, 'id'> & { id?: string };
+/** content script から SW へ送る取り込み前のメッセージ。id は SW 側で補完し、seq は DB が振る */
+export type IngestItem = Omit<ChatMessage, 'id' | 'seq'> & { id?: string };
+
+/** 一覧のページ送りの位置。同じ時刻の行があっても一意に定まるよう id まで含める */
+export interface PageCursor {
+  ts: number;
+  id: string;
+}
 
 /** users store の 1 レコード(集計キャッシュ) */
 export interface UserRecord {
@@ -71,4 +79,6 @@ export interface UserStats {
   count: number;
   firstTs: number | null;
   lastTs: number | null;
+  /** このユーザーのメッセージが保存されているチャンネル(名前順) */
+  channels: string[];
 }

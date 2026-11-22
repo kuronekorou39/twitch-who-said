@@ -1,10 +1,10 @@
 import { saveDiag } from '../shared/diag';
 import { isContextAlive, rpc } from '../shared/messages';
+import { detectPage, type PageInfo, samePage } from '../shared/page';
 import { DEFAULT_SETTINGS } from '../shared/settings';
 import type { Settings } from '../shared/types';
 import { ChatCapture } from './capture';
 import { extractLiveMessage, extractVodMessage } from './extract';
-import { detectPage, samePage, type PageInfo } from './page';
 import { installPopover, type Popover } from './popover';
 import { SELECTORS } from './selectors';
 import { fetchSsrHtml, resolveVodChannel, resolveVodStart } from './vod';
@@ -230,7 +230,7 @@ function main(): void {
   nav?.addEventListener('navigatesuccess', checkUrl);
   window.addEventListener('popstate', checkUrl);
   timers.push(setInterval(checkUrl, URL_POLL_MS), setInterval(watchdog, CONTAINER_WATCHDOG_MS));
-  window.addEventListener('pagehide', () => capture?.flush());
+  window.addEventListener('pagehide', () => capture?.flush(true));
 }
 
 main();

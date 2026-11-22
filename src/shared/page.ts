@@ -1,9 +1,6 @@
 /** URL からページ種別とチャンネル/VOD を判定する(純粋関数) */
 
-export type PageInfo =
-  | { kind: 'live'; channel: string; modView: boolean }
-  | { kind: 'vod'; vodId: string }
-  | { kind: 'other' };
+export type PageInfo = { kind: 'live'; channel: string; modView: boolean } | { kind: 'vod'; vodId: string } | { kind: 'other' };
 
 /** `/<channel>` として扱わない先頭セグメント */
 const RESERVED_PATHS = new Set([
@@ -62,9 +59,7 @@ export function detectPage(url: string | URL): PageInfo {
     // /popout/<channel>/chat(ポップアウト)と /embed/<channel>/chat(他サイトへの埋め込み)。
     // 埋め込みは iframe 内で動くため、manifest の all_frames で注入される
     const ch = seg[1]?.toLowerCase();
-    return ch && seg[2] === 'chat' && LOGIN_RE.test(ch)
-      ? { kind: 'live', channel: ch, modView: false }
-      : { kind: 'other' };
+    return ch && seg[2] === 'chat' && LOGIN_RE.test(ch) ? { kind: 'live', channel: ch, modView: false } : { kind: 'other' };
   }
   if (first === 'moderator') {
     const ch = seg[1]?.toLowerCase();

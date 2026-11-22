@@ -18,7 +18,8 @@ export async function* exportLines(db: WhoSaidDatabase, pageSize = EXPORT_PAGE):
     const page = await db.getAllFromIndex('messages', 'by_ts', range, pageSize + lastIds.size);
     const fresh = page.filter((m) => !lastIds.has(m.id));
     if (fresh.length === 0) return;
-    yield fresh.map((m) => JSON.stringify(m)).join('\n') + '\n';
+    // seq はこの DB の中でだけ意味を持つので書き出さない
+    yield `${fresh.map(({ seq: _seq, ...m }) => JSON.stringify(m)).join('\n')}\n`;
     const lastTs = fresh[fresh.length - 1]!.ts;
     // 同じ ts のメッセージが境界にあっても取りこぼさないよう、境界 ts の id を覚えて次ページで除外する
     after = lastTs;
@@ -56,7 +57,9 @@ export function parseLine(line: string): IngestItem | null {
     capturedAt: typeof m.capturedAt === 'number' ? m.capturedAt : m.ts,
   };
   if (typeof m.id === 'string' && m.id) item.id = m.id;
-  if (typeof m.vodId === 'string') item.vodId = m.vodId;
+  if (m.approxTs === true) item.approxTs = true;
+  // vodId は VOD へのリンクになるので、Twitch の形式(数字のみ)以外は取り込まない
+  if (typeof m.vodId === 'string' && /^\d+$/.test(m.vodId)) item.vodId = m.vodId;
   if (typeof m.offsetSec === 'number') item.offsetSec = m.offsetSec;
   if (Array.isArray(m.badges)) item.badges = m.badges.filter((b): b is string => typeof b === 'string');
   if (typeof m.color === 'string') item.color = m.color;
@@ -70,12 +73,12 @@ export interface ImportProgress {
 }
 
 /**
- * JSON Lines テキストを取り込む。ingestBatch を通すので冪等で、集計も更新される。
- * 除外ユーザーは適用しない(自分のエクスポートを戻す用途のため)。
+ * JSON Lines を文字列チャンクの列から取り込む。大きなファイルを 1 本の文字列にしないためのストリーム版。
+ * ingestBatch を通すので冪等で、集計も更新される。除外ユーザーは適用しない(自分のエクスポートを戻す用途のため)。
  */
-export async function importLines(
+export async function importChunks(
   db: WhoSaidDatabase,
-  text: string,
+  chunks: AsyncIterable<string> | Iterable<string>,
   onProgress?: (p: ImportProgress) => void,
 ): Promise<ImportProgress> {
   const progress: ImportProgress = { read: 0, imported: 0, invalid: 0 };
@@ -87,22 +90,47 @@ export async function importLines(
     batch = [];
     onProgress?.(progress);
   };
-  let start = 0;
-  while (start < text.length) {
-    let end = text.indexOf('\n', start);
-    if (end === -1) end = text.length;
-    const line = text.slice(start, end);
-    start = end + 1;
-    if (!line.trim()) continue;
+  const takeLine = async (line: string) => {
+    if (!line.trim()) return;
     progress.read++;
     const item = parseLine(line);
     if (!item) {
       progress.invalid++;
-      continue;
+      return;
     }
     batch.push(item);
     if (batch.length >= IMPORT_BATCH) await flush();
+  };
+  // チャンクの境界は行の途中に来るので、改行が来るまで持ち越す
+  let rest = '';
+  for await (const chunk of chunks) {
+    const text = rest + chunk;
+    let start = 0;
+    for (let end = text.indexOf('\n'); end !== -1; end = text.indexOf('\n', start)) {
+      await takeLine(text.slice(start, end));
+      start = end + 1;
+    }
+    rest = text.slice(start);
   }
+  await takeLine(rest);
   await flush();
   return progress;
+}
+
+export function importLines(db: WhoSaidDatabase, text: string, onProgress?: (p: ImportProgress) => void): Promise<ImportProgress> {
+  return importChunks(db, [text], onProgress);
+}
+
+/** File などのバイト列ストリームを UTF-8 の文字列チャンクにする */
+export async function* decodeStream(stream: ReadableStream<BufferSource>): AsyncGenerator<string> {
+  const reader = stream.pipeThrough(new TextDecoderStream()).getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }

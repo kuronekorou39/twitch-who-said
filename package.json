@@ -1,6 +1,6 @@
 {
   "name": "twitch-who-said",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "description": "Who Said — Twitch Chat History. Twitch のチャット欄でユーザー名をクリックすると、そのユーザーの過去コメントをポップオーバー表示する Chrome 拡張",
   "private": true,
   "type": "module",
@@ -13,16 +13,24 @@
     "type": "git",
     "url": "https://github.com/kuronekorou39/twitch-who-said"
   },
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "check": "npm run lint && npm run typecheck && npm test",
     "smoke": "node scripts/smoke.mjs",
+    "screenshots": "node scripts/screenshots.mjs",
     "icons": "node scripts/make-icons.mjs"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.6.8",
     "@crxjs/vite-plugin": "^3.0.0",
     "@types/chrome": "^0.3.7",
     "fake-indexeddb": "^6.2.8",

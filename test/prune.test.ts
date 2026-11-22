@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, getStats, getUserStats, ingestBatch } from '../src/db/db';
-import { prune } from '../src/db/prune';
+import { deleteUsers, prune } from '../src/db/prune';
 import { DEFAULT_SETTINGS } from '../src/shared/settings';
 import type { IngestItem, Settings } from '../src/shared/types';
 
@@ -60,7 +60,11 @@ describe('prune', () => {
 
   it('全体上限を超えた分を古い順に削除する', async () => {
     const db = await getDb();
-    await ingestBatch(db, [...Array.from({ length: 5 }, (_, i) => item('a', i)), ...Array.from({ length: 5 }, (_, i) => item('b', i + 10))], new Set());
+    await ingestBatch(
+      db,
+      [...Array.from({ length: 5 }, (_, i) => item('a', i)), ...Array.from({ length: 5 }, (_, i) => item('b', i + 10))],
+      new Set(),
+    );
     const r = await prune(db, { ...noLimits, maxTotal: 7 }, opts);
     expect(r.byTotal).toBe(3);
     const st = await getStats(db);
@@ -108,6 +112,53 @@ describe('prune', () => {
     expect(ids).toEqual(['b1', 'p1', 'p3', 'p4']);
     expect((await getUserStats(db, 'a')).count).toBe(3);
     expect((await getStats(db)).messages).toBe(4);
+  });
+
+  it('同じキーの行がチャンク境界をまたいでも重複を掃除する', async () => {
+    const db = await getDb();
+    const base = { user: 'a', displayName: 'a', channel: 'ch', text: 'same', ts: NOW, source: 'live' as const, capturedAt: NOW };
+    for (const id of ['r1', 'r2', 'r3', 'r4', 'r5']) await db.put('messages', { id, ...base });
+    const r = await prune(db, noLimits, { ...opts, chunk: 2 });
+    expect(r.byDuplicate).toBe(4);
+    expect((await db.getAll('messages')).length).toBe(1);
+  });
+
+  it('途中で止まっても、次回は保存した位置から再開し、終わったら位置を消す', async () => {
+    const db = await getDb();
+    const base = { displayName: 'a', channel: 'ch', source: 'live' as const, capturedAt: NOW };
+    for (let i = 0; i < 6; i++) await db.put('messages', { id: `m${i}`, user: `u${i}`, text: 't', ts: NOW, ...base });
+    let yields = 0;
+    const stopped = prune(db, noLimits, {
+      ...opts,
+      chunk: 2,
+      yieldFn: async () => {
+        if (++yields === 1) throw new Error('SW stopped');
+      },
+    });
+    await expect(stopped).rejects.toThrow('SW stopped');
+    expect((await db.get('meta', 'pruneDupResume'))?.value).toMatchObject({ id: 'm1' });
+    await prune(db, noLimits, opts);
+    expect(await db.get('meta', 'pruneDupResume')).toBeUndefined();
+  });
+
+  it('期間切れのエモートと VOD 開始日時を消し、新しいものは残す', async () => {
+    const db = await getDb();
+    await db.put('emotes', { name: 'old', url: 'https://x/old', seenAt: NOW - 400 * DAY });
+    await db.put('emotes', { name: 'new', url: 'https://x/new', seenAt: NOW });
+    await db.put('meta', { key: 'vodStart:1', value: NOW - 400 * DAY });
+    await db.put('meta', { key: 'vodStart:2', value: NOW });
+    await prune(db, { ...noLimits, retentionDays: 365 }, opts);
+    expect((await db.getAll('emotes')).map((e) => e.name)).toEqual(['new']);
+    expect(await db.get('meta', 'vodStart:1')).toBeUndefined();
+    expect(await db.get('meta', 'vodStart:2')).toBeDefined();
+  });
+
+  it('deleteUsers は指定ユーザーの発言と集計を消す', async () => {
+    const db = await getDb();
+    await ingestBatch(db, [item('a', 0), item('a', 1), item('b', 2)], new Set());
+    expect(await deleteUsers(db, ['A'], opts)).toBe(2);
+    expect((await getUserStats(db, 'a')).count).toBe(0);
+    expect((await getUserStats(db, 'b')).count).toBe(1);
   });
 
   it('0 は無効(何も消さない)', async () => {

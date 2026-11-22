@@ -1,5 +1,5 @@
 import { getDb } from '../db/db';
-import { exportFileName, exportLines, importLines } from '../db/export';
+import { decodeStream, exportFileName, exportLines, importChunks } from '../db/export';
 import { loadDiag } from '../shared/diag';
 import { rpc } from '../shared/messages';
 import type { Settings } from '../shared/types';
@@ -66,11 +66,14 @@ function fillForm(form: HTMLFormElement, s: Settings): void {
 
 function readForm(form: HTMLFormElement): Partial<Settings> {
   const fd = new FormData(form);
-  const num = (k: string) => Number(fd.get(k) ?? 0);
+  // 0 は「無制限」を意味するので、空欄を 0 にしない。空欄の項目は変更しない
+  const nums: Partial<Settings> = {};
+  for (const k of ['retentionDays', 'maxPerUser', 'maxTotal'] as const) {
+    const raw = String(fd.get(k) ?? '').trim();
+    if (raw !== '') nums[k] = Number(raw);
+  }
   return {
-    retentionDays: num('retentionDays'),
-    maxPerUser: num('maxPerUser'),
-    maxTotal: num('maxTotal'),
+    ...nums,
     excludeUsers: String(fd.get('excludeUsers') ?? '')
       .split(/[\n,]/)
       .map((s) => s.trim())
@@ -85,10 +88,11 @@ function readForm(form: HTMLFormElement): Partial<Settings> {
 async function doExport(): Promise<void> {
   setStatus('export-status', '書き出し中…');
   const db = await getDb();
-  const chunks: string[] = [];
+  // 文字列のまま貯めず Blob にしていく(Blob の中身は JS ヒープの外に置かれる)
+  const chunks: Blob[] = [];
   let lines = 0;
   for await (const chunk of exportLines(db)) {
-    chunks.push(chunk);
+    chunks.push(new Blob([chunk]));
     lines += chunk.split('\n').length - 1;
     setStatus('export-status', `書き出し中… ${fmtNum(lines)} 件`);
   }
@@ -104,9 +108,10 @@ async function doExport(): Promise<void> {
 
 async function doImport(file: File): Promise<void> {
   setStatus('import-status', `読み込み中… ${file.name}`);
-  const text = await file.text();
   const db = await getDb();
-  const r = await importLines(db, text, (p) => setStatus('import-status', `取り込み中… ${fmtNum(p.imported)} / ${fmtNum(p.read)} 件`));
+  const r = await importChunks(db, decodeStream(file.stream()), (p) =>
+    setStatus('import-status', `取り込み中… ${fmtNum(p.imported)} / ${fmtNum(p.read)} 件`),
+  );
   const invalid = r.invalid ? `、不正な行 ${fmtNum(r.invalid)}` : '';
   setStatus('import-status', `${fmtNum(r.read)} 行を読み、${fmtNum(r.imported)} 件を追加しました(重複は除外${invalid})`, 10_000);
   await refreshStats();
@@ -133,9 +138,17 @@ async function main(): Promise<void> {
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     void (async () => {
+      const prev = await rpc({ type: 'ws:getSettings' });
       const saved = await rpc({ type: 'ws:setSettings', patch: readForm(form) });
       fillForm(form, saved);
       setStatus('save-status', '保存しました', 2000);
+      // 除外は今後の取り込みを止めるだけなので、保存済みの発言を消すかは確認して決める
+      const added = saved.excludeUsers.filter((u) => !prev.excludeUsers.includes(u));
+      if (added.length > 0 && confirm(`除外に追加した ${added.join(', ')} の保存済みの発言も削除しますか?元に戻せません。`)) {
+        const { deleted } = await rpc({ type: 'ws:deleteUsers', users: added });
+        setStatus('save-status', `保存し、${fmtNum(deleted)} 件を削除しました`, 5000);
+        await refreshStats();
+      }
     })();
   });
 

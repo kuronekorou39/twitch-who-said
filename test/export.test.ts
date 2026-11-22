@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getDb, getStats, ingestBatch } from '../src/db/db';
-import { exportFileName, exportLines, importLines, parseLine } from '../src/db/export';
+import { exportFileName, exportLines, importChunks, importLines, parseLine } from '../src/db/export';
 import type { ChatMessage, IngestItem } from '../src/shared/types';
 
 const T0 = 1_800_000_000_000;
@@ -28,7 +28,10 @@ describe('export / import', () => {
     const items = [item(0), item(1), item(2, { text: 'dup-a' }), item(2, { text: 'dup-b' }), item(2, { text: 'dup-c' }), item(3), item(4)];
     await ingestBatch(db, items, new Set());
     const text = await collect(exportLines(db, 3));
-    const lines = text.trim().split('\n').map((l) => JSON.parse(l) as ChatMessage);
+    const lines = text
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l) as ChatMessage);
     expect(lines.length).toBe(7);
     expect(new Set(lines.map((l) => l.id)).size).toBe(7);
     for (let i = 1; i < lines.length; i++) expect(lines[i]!.ts).toBeGreaterThanOrEqual(lines[i - 1]!.ts);
@@ -42,7 +45,11 @@ describe('export / import', () => {
 
   it('エクスポート → 全削除 → インポートで同じ内容に戻り、再インポートは冪等', async () => {
     const db = await getDb();
-    await ingestBatch(db, [item(0), item(1, { source: 'vod', vodId: '9', offsetSec: 12 }), item(2, { badges: ['vip'], color: '#ff0000' })], new Set());
+    await ingestBatch(
+      db,
+      [item(0), item(1, { source: 'vod', vodId: '9', offsetSec: 12 }), item(2, { badges: ['vip'], color: '#ff0000' })],
+      new Set(),
+    );
     const text = await collect(exportLines(db));
     const before = await db.getAll('messages');
 
@@ -71,6 +78,26 @@ describe('export / import', () => {
   it('parseLine は login / channel を小文字化し、source を正規化する', () => {
     const p = parseLine(JSON.stringify({ user: 'Foo', channel: 'Bar', text: 'x', ts: 1, source: 'weird' }));
     expect(p).toMatchObject({ user: 'foo', channel: 'bar', source: 'live', displayName: 'Foo', capturedAt: 1 });
+  });
+
+  it('approxTs を保ち、内部用の seq は書き出さない', async () => {
+    const db = await getDb();
+    await ingestBatch(db, [item(0, { approxTs: true })], new Set());
+    const text = await collect(exportLines(db));
+    expect(JSON.parse(text)).not.toHaveProperty('seq');
+    expect(parseLine(text.trim())?.approxTs).toBe(true);
+  });
+
+  it('数字以外の vodId は取り込まない', () => {
+    const p = parseLine(JSON.stringify({ user: 'a', channel: 'c', text: 'x', ts: 1, vodId: '../evil' }));
+    expect(p?.vodId).toBeUndefined();
+  });
+
+  it('行の途中で切れたチャンクでも正しく取り込む', async () => {
+    const db = await getDb();
+    const text = `${JSON.stringify(item(0))}\n${JSON.stringify(item(1))}`;
+    const r = await importChunks(db, [text.slice(0, 10), text.slice(10, 150), text.slice(150)]);
+    expect(r).toEqual({ read: 2, imported: 2, invalid: 0 });
   });
 
   it('ファイル名は日付付き', () => {

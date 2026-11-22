@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Who Said — 履歴ビューア</title>
+    <link rel="stylesheet" href="./viewer.css" />
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <img src="/icon48.png" alt="" width="24" height="24" />
+        <span class="brand-name">Who Said</span>
+        <span class="muted">履歴ビューア</span>
+      </div>
+      <div id="summary" class="muted summary"></div>
+      <button id="open-options" class="ghost" type="button">設定</button>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" data-tab="users" aria-selected="true">ユーザー</button>
+          <button type="button" role="tab" data-tab="channels" aria-selected="false">チャンネル</button>
+        </div>
+        <input id="side-search" type="search" placeholder="ユーザーを検索…" aria-label="一覧を検索" />
+        <ul id="side-list" class="side-list"></ul>
+      </aside>
+
+      <main class="main">
+        <div class="toolbar">
+          <div id="chips" class="chips"></div>
+          <input id="keyword" type="search" placeholder="本文を検索…" aria-label="本文を検索" />
+        </div>
+        <div id="list" class="list">
+          <div class="sentinel"></div>
+          <div class="status"></div>
+        </div>
+        <div class="footer">
+          <span id="count"></span>
+          <button id="jump-latest" class="ghost small" type="button" hidden>最新へ ↓</button>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
