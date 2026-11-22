@@ -7,6 +7,7 @@ export interface FeedPage {
   hasMore: boolean;
   cursor: PageCursor | null;
   seq: number;
+  scanned?: number;
 }
 
 export interface FeedChanges {
@@ -31,6 +32,8 @@ export interface FeedOptions<C> {
   maxRows: number;
   /** 行が増減したとき */
   onChange?: (kind: 'page' | 'live') => void;
+  /** 一致なしのまま走査を続けるとき、読み直してからの累計走査行数を知らせる */
+  onScan?: (scanned: number) => void;
 }
 
 const compare = (a: PageCursor, b: PageCursor) => a.ts - b.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -48,6 +51,7 @@ export class ChatFeed<C> {
   private more = false;
   private loading = false;
   private polling = false;
+  private scanned = 0;
   /** reload / clear のたびに増やし、古い応答を捨てる */
   private token = 0;
 
@@ -73,6 +77,7 @@ export class ChatFeed<C> {
     this.ids.clear();
     this.cursor = this.seq = undefined;
     this.more = this.loading = false;
+    this.scanned = 0;
   }
 
   /** 最新ページを読み直して最下部に合わせる */
@@ -102,6 +107,8 @@ export class ChatFeed<C> {
         if (res.cursor) this.cursor = res.cursor;
         // 走査上限で一致なしのまま止まったら続きを読む。絞り込みが変われば token で打ち切られる
         if (res.items.length > 0 || !res.hasMore) break;
+        this.scanned += res.scanned ?? 0;
+        this.o.onScan?.(this.scanned);
       }
       this.setStatus(this.rows.length ? '' : this.o.emptyText());
       this.o.onChange?.('page');

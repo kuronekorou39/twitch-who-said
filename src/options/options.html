@@ -60,15 +60,18 @@
         </div>
         <div class="actions">
           <button id="btn-export" type="button" class="secondary">エクスポート(JSON Lines)</button>
-          <span id="export-status" class="muted"></span>
+          <span id="export-estimate" class="muted small"></span>
         </div>
+        <progress id="export-progress" max="100" value="0" aria-label="エクスポートの進捗" hidden></progress>
+        <div id="export-status" class="muted small" role="status"></div>
         <div class="actions">
           <label class="file-label">
             <input id="file-import" type="file" accept=".jsonl,.json,.txt,application/jsonl,text/plain" hidden />
             <span class="button secondary">インポート(JSON Lines)</span>
           </label>
-          <span id="import-status" class="muted"></span>
         </div>
+        <progress id="import-progress" max="100" value="0" aria-label="インポートの進捗" hidden></progress>
+        <div id="import-status" class="muted small" role="status"></div>
         <div class="actions">
           <button id="btn-clear" type="button" class="danger">すべて削除</button>
         </div>

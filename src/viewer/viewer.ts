@@ -32,6 +32,13 @@ const STICK_BOTTOM_PX = 32;
 const MAX_ROWS = 3000;
 /** 新着があってもサイドバーを描き直す最短間隔 */
 const SIDEBAR_REFRESH_MS = 10_000;
+/** 絞り込みの切り替えがこれより速く終われば、読み込み表示を出さない(ちらつき防止) */
+const LOADING_DELAY_MS = 200;
+/** 読み込みがこれより長引いたら、時間がかかる旨と経過秒数を出す */
+const LOADING_HINT_MS = 1500;
+const LOADING_TICK_MS = 500;
+const SKELETON_ROWS = 18;
+const SKELETON_SIDE_ROWS = 12;
 
 type Tab = 'users' | 'channels';
 
@@ -56,6 +63,12 @@ export async function startViewer(doc: Document = document): Promise<() => void>
     status: doc.querySelector<HTMLElement>('#list .status')!,
     count: $('count'),
     jumpLatest: $<HTMLButtonElement>('jump-latest'),
+    loading: $('loading'),
+    loadingText: $('loading-text'),
+    loadingPct: $('loading-pct'),
+    loadingBar: $('loading-bar'),
+    loadingFill: $('loading-fill'),
+    loadingRows: $('loading-rows'),
   };
   const dark = !matchMedia('(prefers-color-scheme: light)').matches;
 
@@ -131,9 +144,87 @@ export async function startViewer(doc: Document = document): Promise<() => void>
       void updateSummary();
       if (Date.now() - sidebarAt >= SIDEBAR_REFRESH_MS) void renderSidebar();
     },
+    onScan: (scanned) => {
+      if (scanTotal === null || scanTotal === 0) return;
+      scanning = true;
+      els.loadingText.textContent = '本文を検索しています…';
+      setLoadingPct(Math.min(99, Math.floor((scanned / scanTotal) * 100)));
+    },
   });
+
+  // ---- 読み込み表示 ----
+
+  let loadSeq = 0;
+  /** キーワード検索の対象件数。わかるまでは % を出さない */
+  let scanTotal: number | null = null;
+  let scanning = false;
+  let loadingShowTimer: ReturnType<typeof setTimeout> | undefined;
+  let loadingTick: ReturnType<typeof setInterval> | undefined;
+
+  /** 実際の進捗がわかるときだけ % を出す。null は進捗不明(流れるバー) */
+  function setLoadingPct(pct: number | null): void {
+    els.loadingBar.classList.toggle('indeterminate', pct === null);
+    els.loadingPct.textContent = pct === null ? '' : `${pct}%`;
+    els.loadingFill.style.width = pct === null ? '' : `${pct}%`;
+  }
+
+  function hideLoading(): void {
+    clearTimeout(loadingShowTimer);
+    clearInterval(loadingTick);
+    els.loading.hidden = true;
+  }
+
+  function showLoading(delayMs: number): void {
+    hideLoading();
+    scanning = false;
+    setLoadingPct(null);
+    els.loadingText.textContent = '履歴を読み込んでいます…';
+    const startedAt = Date.now();
+    loadingTick = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      if (scanning || elapsed < LOADING_HINT_MS) return;
+      els.loadingText.textContent = `履歴が多いと時間がかかります(更新後の初回は特に)。経過 ${Math.floor(elapsed / 1000)} 秒`;
+    }, LOADING_TICK_MS);
+    if (delayMs === 0) els.loading.hidden = false;
+    else loadingShowTimer = setTimeout(() => (els.loading.hidden = false), delayMs);
+  }
+
+  const skeleton = () => {
+    const s = doc.createElement('span');
+    s.className = 'sk';
+    return s;
+  };
+  els.loadingRows.replaceChildren(...Array.from({ length: SKELETON_ROWS }, skeleton));
+  els.sideList.replaceChildren(
+    ...Array.from({ length: SKELETON_SIDE_ROWS }, () => {
+      const li = doc.createElement('li');
+      li.className = 'sk-row';
+      li.setAttribute('aria-hidden', 'true');
+      li.append(skeleton());
+      return li;
+    }),
+  );
+  els.summary.textContent = '集計中…';
+
   const load = async () => {
-    await feed.reload();
+    const my = ++loadSeq;
+    scanTotal = null;
+    showLoading(my === 1 ? 0 : LOADING_DELAY_MS);
+    if (filter.keyword) {
+      void getDb()
+        .then((db) => countMessages(db, { user: filter.user ?? undefined, channel: filter.channel ?? undefined }))
+        .then((n) => {
+          if (my === loadSeq) scanTotal = n;
+        })
+        .catch(() => {
+          /* 件数が取れなければ % なしで続ける */
+        });
+    }
+    try {
+      await feed.reload();
+    } finally {
+      if (my === loadSeq) hideLoading();
+    }
     await updateSummary();
   };
 
@@ -329,5 +420,8 @@ export async function startViewer(doc: Document = document): Promise<() => void>
   void refreshUserLabel();
   void renderSidebar();
   await load();
-  return () => clearInterval(pollTimer);
+  return () => {
+    clearInterval(pollTimer);
+    hideLoading();
+  };
 }

@@ -1,5 +1,5 @@
 import { getDb } from '../db/db';
-import { decodeStream, exportFileName, exportLines, importChunks } from '../db/export';
+import { decodeStream, estimateExportBytes, exportFileName, exportLines, importChunks } from '../db/export';
 import { loadDiag } from '../shared/diag';
 import { rpc } from '../shared/messages';
 import type { Settings } from '../shared/types';
@@ -26,6 +26,29 @@ function setStatus(id: string, text: string, clearAfterMs = 0): void {
   if (clearAfterMs > 0) setTimeout(() => (el.textContent = ''), clearAfterMs);
 }
 
+/** 完了の直前まで 100% にしない(件数は処理中の取り込みで増えることがある) */
+const percentOf = (done: number, total: number) => (total > 0 ? Math.min(99, Math.floor((done / total) * 100)) : 0);
+
+function setProgress(id: string, pct: number | null): void {
+  const bar = $<HTMLProgressElement>(id);
+  bar.hidden = pct === null;
+  if (pct !== null) bar.value = pct;
+}
+
+async function refreshExportEstimate(messages: number): Promise<void> {
+  const el = $('export-estimate');
+  if (messages === 0) {
+    el.textContent = '';
+    return;
+  }
+  try {
+    const bytes = await estimateExportBytes(await getDb(), messages);
+    el.textContent = `${fmtNum(messages)} 件 · 約 ${fmtBytes(bytes)}`;
+  } catch {
+    el.textContent = `${fmtNum(messages)} 件`;
+  }
+}
+
 async function refreshStats(): Promise<void> {
   const st = await rpc({ type: 'ws:stats' });
   $('st-messages').textContent = fmtNum(st.messages);
@@ -36,6 +59,7 @@ async function refreshStats(): Promise<void> {
   $('st-last-ingest').textContent = fmtDate(st.lastIngestAt);
   $('st-last-prune').textContent = fmtDate(st.lastPruneAt);
   $('ws-no-data').hidden = st.messages > 0;
+  void refreshExportEstimate(st.messages);
   const diag = await loadDiag();
   const diagEl = $('ws-diag');
   diagEl.hidden = !diag || diag.ok;
@@ -86,35 +110,73 @@ function readForm(form: HTMLFormElement): Partial<Settings> {
 
 /** 全件を JSON Lines にして <a download> で保存する(chrome.downloads 権限は使わない) */
 async function doExport(): Promise<void> {
-  setStatus('export-status', '書き出し中…');
-  const db = await getDb();
-  // 文字列のまま貯めず Blob にしていく(Blob の中身は JS ヒープの外に置かれる)
-  const chunks: Blob[] = [];
-  let lines = 0;
-  for await (const chunk of exportLines(db)) {
-    chunks.push(new Blob([chunk]));
-    lines += chunk.split('\n').length - 1;
-    setStatus('export-status', `書き出し中… ${fmtNum(lines)} 件`);
+  const button = $<HTMLButtonElement>('btn-export');
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '書き出し中…';
+  setProgress('export-progress', 0);
+  setStatus('export-status', '書き出しを準備しています…');
+  try {
+    const db = await getDb();
+    const total = await db.count('messages');
+    // 文字列のまま貯めず Blob にしていく(Blob の中身は JS ヒープの外に置かれる)
+    const chunks: Blob[] = [];
+    let lines = 0;
+    let bytes = 0;
+    for await (const chunk of exportLines(db)) {
+      const part = new Blob([chunk]);
+      chunks.push(part);
+      bytes += part.size;
+      lines += chunk.split('\n').length - 1;
+      const pct = percentOf(lines, total);
+      const estimate = fmtBytes(Math.round((bytes / lines) * Math.max(total, lines)));
+      setProgress('export-progress', pct);
+      setStatus('export-status', `${pct}% · ${fmtNum(lines)} / ${fmtNum(total)} 件 · ${fmtBytes(bytes)} / 約 ${estimate}`);
+    }
+    setStatus('export-status', 'ファイルを作成しています…');
+    const blob = new Blob(chunks, { type: 'application/jsonl' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = exportFileName();
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setStatus('export-status', `${fmtNum(lines)} 件を書き出しました (${fmtBytes(blob.size)})。ブラウザのダウンロードを確認してください`);
+  } finally {
+    setProgress('export-progress', null);
+    button.disabled = false;
+    button.textContent = label;
   }
-  const blob = new Blob(chunks, { type: 'application/jsonl' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = exportFileName();
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  setStatus('export-status', `${fmtNum(lines)} 件を書き出しました (${fmtBytes(blob.size)})`, 8000);
 }
 
 async function doImport(file: File): Promise<void> {
-  setStatus('import-status', `読み込み中… ${file.name}`);
-  const db = await getDb();
-  const r = await importChunks(db, decodeStream(file.stream()), (p) =>
-    setStatus('import-status', `取り込み中… ${fmtNum(p.imported)} / ${fmtNum(p.read)} 件`),
-  );
-  const invalid = r.invalid ? `、不正な行 ${fmtNum(r.invalid)}` : '';
-  setStatus('import-status', `${fmtNum(r.read)} 行を読み、${fmtNum(r.imported)} 件を追加しました(重複は除外${invalid})`, 10_000);
-  await refreshStats();
+  const input = $<HTMLInputElement>('file-import');
+  input.disabled = true;
+  setProgress('import-progress', 0);
+  setStatus('import-status', `読み込み中… ${file.name} (${fmtBytes(file.size)})`);
+  try {
+    const db = await getDb();
+    let readBytes = 0;
+    const counted = file.stream().pipeThrough(
+      new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
+        transform(chunk, controller) {
+          readBytes += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      }),
+    );
+    const r = await importChunks(db, decodeStream(counted), (p) => {
+      const pct = percentOf(readBytes, file.size);
+      setProgress('import-progress', pct);
+      setStatus('import-status', `${pct}% · ${fmtBytes(readBytes)} / ${fmtBytes(file.size)} · ${fmtNum(p.imported)} 件を追加`);
+    });
+    const invalid = r.invalid ? `、不正な行 ${fmtNum(r.invalid)}` : '';
+    setStatus('import-status', `${fmtNum(r.read)} 行を読み、${fmtNum(r.imported)} 件を追加しました(重複は除外${invalid})`);
+    await refreshStats();
+  } finally {
+    setProgress('import-progress', null);
+    input.disabled = false;
+  }
 }
 
 async function doPrune(): Promise<void> {
@@ -130,10 +192,9 @@ async function doPrune(): Promise<void> {
 
 async function main(): Promise<void> {
   const form = $<HTMLFormElement>('form-settings');
-  fillForm(form, await rpc({ type: 'ws:getSettings' }));
-  await refreshStats();
 
-  $('btn-refresh').addEventListener('click', () => void refreshStats());
+  // 初期表示に失敗してもエクスポートは使えるよう、ボタンの処理を先に登録する
+  $('btn-refresh').addEventListener('click', () => void refreshStats().catch(showBackgroundError));
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -163,8 +224,24 @@ async function main(): Promise<void> {
 
   $('btn-clear').addEventListener('click', () => {
     if (!confirm('保存済みのチャット履歴をすべて削除します。元に戻せません。よろしいですか?')) return;
-    void rpc({ type: 'ws:clear' }).then(refreshStats);
+    void rpc({ type: 'ws:clear' }).then(refreshStats).catch(showBackgroundError);
   });
+
+  try {
+    fillForm(form, await rpc({ type: 'ws:getSettings' }));
+    await refreshStats();
+  } catch (e) {
+    // 設定を読めていないフォームを保存すると、既定値でない設定を空で上書きしてしまう
+    form.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled = true;
+    showBackgroundError(e);
+  }
+}
+
+function showBackgroundError(e: unknown): void {
+  console.error('[Who Said] options init failed', e);
+  const el = $('ws-diag');
+  el.textContent = '拡張機能の内部処理と通信できません。chrome://extensions で再読み込みしてください(エクスポートは実行できます)';
+  el.hidden = false;
 }
 
 void main();

@@ -238,6 +238,8 @@ export interface QueryResult {
   cursor: PageCursor | null;
   /** このページを読んだ時点の書き込み連番。以降の新着は queryChanges でこの続きから取る */
   seq: number;
+  /** このページで走査した行数(検索の進捗表示用) */
+  scanned: number;
 }
 
 /**
@@ -285,7 +287,7 @@ export async function queryMessages(db: WhoSaidDatabase, p: QueryParams): Promis
     cursor = await cursor.continue();
   }
   await tx.done;
-  return { items, hasMore, cursor: last, seq };
+  return { items, hasMore, cursor: last, seq, scanned };
 }
 
 export interface ChangesParams {

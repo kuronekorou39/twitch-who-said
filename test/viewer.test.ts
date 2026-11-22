@@ -64,6 +64,18 @@ describe('履歴ビューア', () => {
     expect(document.getElementById('count')!.textContent).toBe('表示中 3 件 / 3 件');
   });
 
+  it('読み込み中はスケルトンを出し、終わったら消す', async () => {
+    const { startViewer } = await import('../src/viewer/viewer');
+    const started = startViewer();
+    expect(document.getElementById('loading')!.hidden).toBe(false);
+    expect(document.querySelectorAll('#loading-rows .sk').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll('#side-list .sk-row').length).toBeGreaterThan(0);
+    stop = await started;
+    await flush();
+    expect(document.getElementById('loading')!.hidden).toBe(true);
+    expect(document.querySelectorAll('#side-list .sk-row').length).toBe(0);
+  });
+
   it('名前やチャンネルをクリックすると絞り込み、URL に残り、チップの × で解除できる', async () => {
     const { startViewer } = await import('../src/viewer/viewer');
     stop = await startViewer();

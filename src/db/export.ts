@@ -5,6 +5,20 @@ import { ingestBatch, type WhoSaidDatabase } from './db';
 const EXPORT_PAGE = 2000;
 /** インポート時に 1 バッチで書く件数 */
 const IMPORT_BATCH = 500;
+/** 書き出しサイズの見積もりに使う行数 */
+const SIZE_SAMPLE = 200;
+
+/** seq はこの DB の中でだけ意味を持つので書き出さない */
+const serialize = ({ seq: _seq, ...m }: ChatMessage) => JSON.stringify(m);
+
+/** 先頭の数百行の平均から、全件を書き出したときのバイト数を見積もる */
+export async function estimateExportBytes(db: WhoSaidDatabase, count: number): Promise<number> {
+  if (count === 0) return 0;
+  const sample = await db.getAll('messages', null, SIZE_SAMPLE);
+  if (sample.length === 0) return 0;
+  const bytes = new TextEncoder().encode(`${sample.map(serialize).join('\n')}\n`).byteLength;
+  return Math.round((bytes / sample.length) * count);
+}
 
 /**
  * 全メッセージを JSON Lines の文字列チャンクとして順に返す(ts 昇順)。
@@ -18,8 +32,7 @@ export async function* exportLines(db: WhoSaidDatabase, pageSize = EXPORT_PAGE):
     const page = await db.getAllFromIndex('messages', 'by_ts', range, pageSize + lastIds.size);
     const fresh = page.filter((m) => !lastIds.has(m.id));
     if (fresh.length === 0) return;
-    // seq はこの DB の中でだけ意味を持つので書き出さない
-    yield `${fresh.map(({ seq: _seq, ...m }) => JSON.stringify(m)).join('\n')}\n`;
+    yield `${fresh.map(serialize).join('\n')}\n`;
     const lastTs = fresh[fresh.length - 1]!.ts;
     // 同じ ts のメッセージが境界にあっても取りこぼさないよう、境界 ts の id を覚えて次ページで除外する
     after = lastTs;

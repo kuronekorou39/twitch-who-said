@@ -5,6 +5,8 @@ export default defineManifest({
   manifest_version: 3,
   name: 'Who Said — Twitch Chat History',
   version: pkg.version,
+  // 拡張 ID を固定する公開鍵。ID が変わると IndexedDB の履歴が見えなくなるので変更しないこと
+  key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr0OQi3NQO7qGVpd3mmon7DTmuqgrobd2pEXAPEHUBpMdjBk3irDO7DjDGrRyJdL6S6hO5pNpWRfmDCArPCmNBRaAMw1ZfzC7xURUIUZAsfvvQUsUmQVoppYAyVjOuZ9Lmr8u+7vfJBHrdkmFlFRAkt026DoJjFSy1XCYYVpWJlrcbxSA1a3gHghrGuaZwhh1H7S2jQbAzmg9chVXRa7heUlJMhFIje4a05+XUwq6wZXNKkvZNA/dEssb+/xoXgFgr2OND6PsOVf6Es0hA1P0moDXf36pABN2ejWjROaf9MCLW6aSoEOioI2BhPsdm64fXM1t/xhPjpL0ptHVuGRCWQIDAQAB',
   // color-mix と scrollbar-color を使う
   minimum_chrome_version: '121',
   description: 'Twitch のチャットでユーザー名をクリックすると、そのユーザーの過去コメントを表示します。データは端末内にのみ保存されます。',
